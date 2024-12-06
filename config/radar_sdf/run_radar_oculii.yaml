@@ -1,19 +1,15 @@
 setting:
-  name: "test_livox"
+  name: "test_oculii"
   output_root: "./experiments"
-  pc_path: "/home/irap/dataset/NTU/loop3_livox"
-  pose_path: "/home/irap/dataset/NTU/gt_odom/loop3_livox.txt"
+  pc_path: "/home/irap/dataset/NTU/loop3"
+  pose_path: "/home/irap/dataset/NTU/gt_odom/loop3_oculii.txt"
+  # begin_frame: 1
+  # end_frame: 8450
 process:
   min_range_m: 0.5
   max_range_m: 30.0
-  min_z_m: -30.0
   vox_down_m: 0.08
-sampler:
-  surface_sample_range_m: 0.25 
-  surface_sample_n: 4
-  free_sample_begin_ratio: 0.3
-  free_sample_end_dist_m: 1.0
-  free_front_sample_n: 2
+  min_z_m: -1.5
 neuralpoints:
   voxel_size_m: 0.4
   query_nn_k: 6
@@ -27,16 +23,17 @@ loss:
   weight_e: 0.5
   numerical_grad_on: True
 continual:
-  batch_size_cur_frame: 1000
+  batch_size_new_sample: 1000
   pool_capacity: 1e7
 # tracker:
-#   source_vox_down_m: 0.6
+#   source_vox_down_m: 1.0
 #   iter_n: 100
-optimizer:
-  iters: 15
+optimizer: # mapper
   batch_size: 8192
   adaptive_iters: True
 eval:
   o3d_vis_on: False # visualize the mapping or not
+  silence_log: True # output the logs or not
+  sensor_cad_path: ./cad/kitti_car.ply
   mesh_freq_frame: 20 # reconstruct the mesh every x frames
   mesh_min_nn: 15

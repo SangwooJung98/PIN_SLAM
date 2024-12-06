@@ -1,0 +1,41 @@
+setting:
+  name: "test_radar"
+  output_root: "./experiments"
+  pc_path: "./data/radar_full/ply"
+  pose_path: "./data/radar_full/poses.txt"
+  calib_path: "./data/radar_full/calib.txt"
+  kitti_correct: False
+  deskew: False
+  begin_frame: 100
+  end_frame: 2690
+process:
+  min_range_m: 0.5
+  max_range_m: 10.0
+  vox_down_m: 0.02
+  min_z_m: -1.5
+neuralpoints:
+  voxel_size_m: 0.3
+  feature_dim: 8 
+  query_nn_k: 6
+  search_alpha: 0.2
+  weighted_first: False
+decoder:
+  freeze_after_frame: 40
+loss:
+  main_loss_type: bce
+  sigma_sigmoid_m: 0.08
+  loss_weight_on: True
+  dist_weight_scale: 0.8
+  ekional_loss_on: True
+  weight_e: 0.5
+continual:
+  batch_size_new_sample: 1000
+  pool_capacity: 2e7
+optimizer: # mapper
+  batch_size: 4096
+eval:
+  o3d_vis_on: False # visualize the mapping or not
+  silence_log: True # output the logs or not
+  sensor_cad_path: ./cad/drone.ply
+  mesh_freq_frame: 50 # reconstruct the mesh every x frames
+  mesh_min_nn: 9

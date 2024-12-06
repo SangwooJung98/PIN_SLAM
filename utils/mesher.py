@@ -312,6 +312,9 @@ class Mesher:
             sdf_pred = sdf_pred[mc_mask > 0]
 
         coord_np = coord.detach().cpu().numpy().astype(np.float64)
+        
+        # print the min, max of the sdf for debugging
+        # print("sdf min: %.2f, max: %.2f" % (np.min(sdf_pred), np.max(sdf_pred)))
 
         sdf_pred_show = np.clip((sdf_pred - min_sdf) / (max_sdf - min_sdf), 0.0, 1.0)
 
