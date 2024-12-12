@@ -34,6 +34,8 @@ from utils.tools import (
     voxel_down_sample_torch,
 )
 
+from utils.ransac import Ransac
+
 class SLAMDataset(Dataset):
     def __init__(self, config: Config) -> None:
 
@@ -171,7 +173,11 @@ class SLAMDataset(Dataset):
         self.cur_point_ts_torch = None
         self.cur_sem_labels_torch = None
         self.cur_sem_labels_full = None
-
+        
+        # current frame's dyanmic data (only for radar pointcloud)
+        cur_dynamic_point_torch = None
+        self.rs = Ransac()
+        
         # source data for registration
         self.cur_source_points = None
         self.cur_source_normals = None
@@ -258,7 +264,7 @@ class SLAMDataset(Dataset):
             print(frame_filename)
         if not self.config.semantic_on:
             point_cloud, point_ts = read_point_cloud(
-                frame_filename, self.config.color_channel
+                frame_filename, self.config.color_channel, is_radar = self.config.is_radar
             )  #  [N, 3], [N, 4] or [N, 6], may contain color or intensity # here read as numpy array
             if self.config.color_channel > 0:
                 point_cloud[:, -self.config.color_channel :] /= self.color_scale
@@ -277,6 +283,17 @@ class SLAMDataset(Dataset):
             self.cur_sem_labels_full = torch.tensor(
                 sem_labels, device=self.device, dtype=torch.int
             )  # full labels (>20 classes)
+            
+        # if self.config.is_radar => do ransac based filtering & save only static points to cur_point_cloud_torch
+        # save dynamic points to cur_dynamic_point_torch
+        if self.config.is_radar:
+            point_cloud[:, 3] = point_cloud[:, 3]
+            self.rs.process_pointcloud(point_cloud)
+            point_cloud = self.rs.static_points[:, :3]
+            
+            self.cur_dynamic_point_torch = torch.tensor(
+                self.rs.dynamic_points, device=self.device, dtype=self.dtype
+            )
 
         self.cur_point_cloud_torch = torch.tensor(
             point_cloud, device=self.device, dtype=self.dtype
@@ -972,7 +989,7 @@ class SLAMDataset(Dataset):
 
 
 def read_point_cloud(
-    filename: str, color_channel: int = 0, bin_channel_count: int = 4
+    filename: str, color_channel: int = 0, bin_channel_count: int = 4, is_radar: bool = False
 ) -> np.ndarray:
 
     # read point cloud from either (*.ply, *.pcd, *.las) or (kitti *.bin) format
@@ -1013,6 +1030,9 @@ def read_point_cloud(
         elif "intensity" in keys and color_channel == 1:
             intensity = pc_load["intensity"]  # if they are available
             # print(intensity)
+            points = np.hstack((points, intensity))
+        elif "intensity" in keys and is_radar:
+            intensity = pc_load["intensity"]
             points = np.hstack((points, intensity))
         
     elif ".pcd" in filename:  # currently cannot be readed by o3d.t.io

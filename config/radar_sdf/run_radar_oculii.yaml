@@ -5,6 +5,7 @@ setting:
   pose_path: "/home/irap/dataset/NTU/gt_odom/loop3_oculii.txt"
   # begin_frame: 1
   # end_frame: 8450
+  is_radar: True
 process:
   min_range_m: 0.5
   max_range_m: 30.0
@@ -25,9 +26,9 @@ loss:
 continual:
   batch_size_new_sample: 1000
   pool_capacity: 1e7
-# tracker:
-#   source_vox_down_m: 1.0
-#   iter_n: 100
+tracker:
+  source_vox_down_m: 1.0
+  iter_n: 100
 optimizer: # mapper
   batch_size: 8192
   adaptive_iters: True

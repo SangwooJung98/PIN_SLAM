@@ -51,6 +51,9 @@ class Config:
         # motion undistortion
         self.deskew: bool = False
         self.lidar_type_guess: str = "velodyne"
+        
+        # option for radar pointcloud including radial velocity
+        self.is_radar = False
 
         # preprocess
         # distance filter
@@ -347,6 +350,8 @@ class Config:
             self.stop_frame_thre = config_args["setting"].get("stop_frame_thre", self.stop_frame_thre)
 
             self.deskew = config_args["setting"].get("deskew", self.deskew) # apply motion undistortion or not
+            
+            self.is_radar = config_args["setting"].get("is_radar", self.is_radar) # use radar radial velocity or not
 
         # process
         if "process" in config_args:
