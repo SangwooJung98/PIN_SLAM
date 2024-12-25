@@ -177,6 +177,9 @@ class SLAMDataset(Dataset):
         # current frame's dyanmic data (only for radar pointcloud)
         cur_dynamic_point_torch = None
         self.rs = Ransac()
+        self.cur_ego_vel = None
+        self.prev_ts = None
+        self.curr_ts = None
         
         # source data for registration
         self.cur_source_points = None
@@ -287,13 +290,14 @@ class SLAMDataset(Dataset):
         # if self.config.is_radar => do ransac based filtering & save only static points to cur_point_cloud_torch
         # save dynamic points to cur_dynamic_point_torch
         if self.config.is_radar:
-            point_cloud[:, 3] = point_cloud[:, 3]
             self.rs.process_pointcloud(point_cloud)
             point_cloud = self.rs.static_points[:, :3]
             
             self.cur_dynamic_point_torch = torch.tensor(
                 self.rs.dynamic_points, device=self.device, dtype=self.dtype
             )
+            self.cur_ego_vel = self.rs.ego_vel
+            self.curr_ts = point_ts
 
         self.cur_point_cloud_torch = torch.tensor(
             point_cloud, device=self.device, dtype=self.dtype
@@ -380,6 +384,16 @@ class SLAMDataset(Dataset):
             self.travel_dist[frame_id] = 0.0
             self.last_pose_ref = self.cur_pose_ref
         elif frame_id > 0:
+            # if is_radar, than usecur_ego_vel for the initial guess
+            # to calculate translation with the ego velocity, time difference is needed
+            time_diff = 0.0
+            if self.config.is_radar:
+                # test, print the ego_vel and time difference
+                if self.prev_ts is not None and self.curr_ts is not None:
+                    time_diff = (self.curr_ts - self.prev_ts) / 1e9
+                    # print(time_diff)
+                self.prev_ts = self.curr_ts
+                        
             # pose initial guess
             # last_translation = np.linalg.norm(self.last_odom_tran[:3, 3])
             if self.config.uniform_motion_on and not self.lose_track: 
@@ -388,8 +402,17 @@ class SLAMDataset(Dataset):
                 cur_pose_init_guess = (
                     self.last_pose_ref @ self.last_odom_tran
                 )  # T_world<-cur = T_world<-last @ T_last<-cur
+                # print("ori_tran: ", self.last_odom_tran)
             else:  # static initial guess
                 cur_pose_init_guess = self.last_pose_ref
+                
+            
+            # if radar, use the ego velocity to calculate the initial guess
+            if self.config.is_radar and time_diff > 0.0:
+                temp_tran = np.eye(4)
+                temp_tran[:3, 3] = self.cur_ego_vel * time_diff
+                temp_tran[:3, :3] = self.last_odom_tran[:3, :3]
+                cur_pose_init_guess = (self.last_pose_ref @ temp_tran)
 
             if not self.config.track_on and self.gt_pose_provided:
                 cur_pose_init_guess = self.gt_poses[frame_id]
@@ -539,6 +562,12 @@ class SLAMDataset(Dataset):
         if self.odom_poses is not None:
             cur_odom_pose = self.odom_poses[cur_frame_id-1] @ self.last_odom_tran  # T_world<-cur
             self.odom_poses[cur_frame_id] = cur_odom_pose
+            
+        # print("\n")
+        # print("self.last_pose_ref", self.last_pose_ref)
+        # print("self.cur_pose_ref", self.cur_pose_ref)
+        # print("self.last_odom_tran", self.last_odom_tran)
+        # print("cur_odom_pose", cur_odom_pose)
 
         cur_frame_travel_dist = np.linalg.norm(self.last_odom_tran[:3, 3])
         if (
@@ -1023,6 +1052,10 @@ def read_point_cloud(
             if time_field in keys:
                 ts = pc_load[time_field]
                 break
+            
+        if is_radar:
+            # get ts from the filename
+            ts = float(filename.split("/")[-1].split(".")[0])
         
         if "colors" in keys and color_channel == 3:
             colors = pc_load["colors"]  # if they are available
@@ -1031,9 +1064,10 @@ def read_point_cloud(
             intensity = pc_load["intensity"]  # if they are available
             # print(intensity)
             points = np.hstack((points, intensity))
-        elif "intensity" in keys and is_radar:
-            intensity = pc_load["intensity"]
-            points = np.hstack((points, intensity))
+        elif "rcs" in keys and "doppler" in keys and is_radar:
+            doppler = pc_load["doppler"]
+            rcs = pc_load["rcs"]            
+            points = np.hstack((points, doppler, rcs))
         
     elif ".pcd" in filename:  # currently cannot be readed by o3d.t.io
         pc_load = o3d.io.read_point_cloud(filename)

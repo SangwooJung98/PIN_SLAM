@@ -29,9 +29,12 @@ loss:
 continual:
   batch_size_cur_frame: 1000
   pool_capacity: 1e7
-# tracker:
-#   source_vox_down_m: 0.6
-#   iter_n: 100
+tracker:
+  source_vox_down_m: 0.6
+  iter_n: 100
+pgo:
+  pgo_freq_frame: 20
+  context_cosdist: 0.3
 optimizer:
   iters: 15
   batch_size: 8192
@@ -40,3 +43,4 @@ eval:
   o3d_vis_on: False # visualize the mapping or not
   mesh_freq_frame: 20 # reconstruct the mesh every x frames
   mesh_min_nn: 15
+  log_freq_frame: 10

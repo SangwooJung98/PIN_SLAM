@@ -154,6 +154,7 @@ class Tracker:
                     print(
                         "[bold yellow](Warning) registration failed: not enough valid points[/bold yellow]"
                     )
+                    # print("test: " + str(valid_point_count) + " " + str(source_point_count))
                 valid_flag = False
 
             if not valid_flag or converged:
@@ -409,6 +410,14 @@ class Tracker:
             & (sdf_std < max_sdf_std)
             # & (sdf_pred_abs < max_sdf)
         )
+        
+        # check how each condition affects the valid_idx
+        # give number of invalid points that are filtered out from each condition
+        # print("Number of invalid points filtered out by each condition:")
+        # print("mask: ", torch.sum(~mask))
+        # print("grad_norm < max_grad_norm: ", torch.sum(~(grad_norm < max_grad_norm)))
+        # print("grad_norm > min_grad_norm: ", torch.sum(~(grad_norm > min_grad_norm)))
+        # print("sdf_std < max_sdf_std: ", torch.sum(~(sdf_std < max_sdf_std)))
 
         valid_points = points[valid_idx]
         valid_point_count = valid_points.shape[0]

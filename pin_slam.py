@@ -203,8 +203,8 @@ def run_pin_slam(config_path=None, dataset_name=None, sequence_name=None, seed=N
                 dataset.lose_track = not valid_flag
                 dataset.update_odom_pose(cur_pose_torch) # update dataset.cur_pose_torch
                 
-                # if not valid_flag and config.o3d_vis_on and o3d_vis.debug_mode > 0:
-                if not valid_flag and config.o3d_vis_on:
+                if not valid_flag and config.o3d_vis_on and o3d_vis.debug_mode > 0:
+                # if not valid_flag and config.o3d_vis_on:
                     o3d_vis.stop()
                 
             else: # incremental mapping with gt pose
