@@ -49,6 +49,7 @@ class Tracker:
         source_colors=None,
         source_normals=None,
         source_semantics=None,
+        source_radar=None,
         source_sdf=None,
         cur_ts=None,
         loop_reg: bool = False,
@@ -112,6 +113,7 @@ class Tracker:
                 source_normals,
                 source_sdf,
                 source_colors,
+                source_radar,
                 min_grad_norm,
                 max_grad_norm,
                 cur_GM_dist_m,
@@ -359,6 +361,7 @@ class Tracker:
         normals: torch.Tensor,
         sdf_labels: torch.Tensor,
         colors: torch.Tensor,
+        radar: torch.Tensor,
         min_grad_norm,
         max_grad_norm,
         GM_dist=None,
@@ -371,6 +374,11 @@ class Tracker:
 
         colors_on = colors is not None and self.config.color_on
         photo_loss_on = self.config.photometric_loss_on and colors_on
+        
+        
+        radar_on = radar is not None and self.config.is_radar
+        radar_loss_on = self.config.radar_loss_on and radar_on
+        
         (
             sdf_pred,
             sdf_grad,
@@ -508,6 +516,10 @@ class Tracker:
                     1
                 )  # color in [0,1]
                 # w_color[colors==0] = 1.
+        
+        if radar_on:
+            # 여기서 radar point의 어떤 channel을 활용할지 정하면 됨. 
+            radar = radar[valid_idx, :]
 
         # sdf standard deviation as the weight (not used)
         # w_std = (std_mean / sdf_std).unsqueeze(1)

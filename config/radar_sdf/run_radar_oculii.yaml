@@ -1,7 +1,7 @@
 setting:
   name: "test_oculii"
   output_root: "./experiments"
-  pc_path: "/home/irap/dataset/NTU/loop1"
+  pc_path: "/home/irap/dataset/NTU/loop2"
   pose_path: "/home/irap/dataset/NTU/gt_odom/loop2_oculii.txt"
   # begin_frame: 1
   # end_frame: 8450

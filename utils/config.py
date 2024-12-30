@@ -210,6 +210,8 @@ class Config:
         self.track_on: bool = False
         self.photometric_loss_on: bool = False # add the color (or intensity) [photometric loss] to the tracking loss
         self.photometric_loss_weight: float = 0.01 # weight for the photometric loss in tracking
+        self.radar_loss_on: bool = False # add the radar intensity loss to the tracking loss
+        self.radar_loss_weight: float = 0.01 # weight for the radar intensity loss in tracking
         self.consist_wieght_on: bool = True # weight for color (intensity) consistency for the measured and queried value
         self.source_vox_down_m: float = 0.8 # downsample voxel resolution for source point cloud
         self.uniform_motion_on: bool = True # use uniform motion (constant velocity) model for the transformation inital guess
@@ -449,6 +451,8 @@ class Config:
                 if self.photometric_loss_on:
                     self.photometric_loss_weight = float(config_args["tracker"].get("photo_weight", self.photometric_loss_weight))
                 self.consist_wieght_on = config_args["tracker"].get("consist_wieght", self.consist_wieght_on)
+            if self.is_radar:
+                # add radar loss .....
             self.uniform_motion_on = config_args["tracker"].get("uniform_motion_on", self.uniform_motion_on)
             self.source_vox_down_m = config_args["tracker"].get("source_vox_down_m", self.vox_down_m * 10.0)
             self.reg_iter_n = config_args["tracker"].get("iter_n", self.reg_iter_n)

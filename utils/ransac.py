@@ -215,3 +215,105 @@ class Ransac:
         filtered_pointcloud = pointcloud[original_indices]
 
         return filtered_pointcloud
+    
+    def rad_vel_uncertainty(self, method=0, alpha=1.0, beta=1.0, epsilon=1e-6):
+        """
+        Calculate radial velocity from ego velocity and compare it with the estimated radial velocity (Doppler).
+        Compute a similarity score for each point.
+        
+        Parameters
+        ----------
+        method : int
+            0 -> Linear + Clipping
+            1 -> Exponential (Gaussian-like)
+            2 -> Logistic (Sigmoid-like)
+        alpha : float
+            Method=1,2 에서 민감도를 조절하는 파라미터
+            (지수/로지스틱 함수에서 차이가 커질 때 0으로 떨어지는 속도 조절)
+        beta : float
+            Method=2 에서 로지스틱 함수의 중심점(차이가 beta 이상이 되면 유사도 급감)
+        epsilon : float
+            분모가 0이 되는 것을 방지하는 소량 값
+        """
+
+        # 먼저 ego_vel, static_points가 잘 세팅되어 있는지 확인
+        if self.ego_vel is None or self.static_points is None:
+            raise ValueError("Ego velocity or static points are not calculated yet.")
+        
+        # Extract positions and doppler velocities
+        positions = self.static_points[:, :3]
+        doppler_vel = self.static_points[:, 3]
+        
+        # Normalize positions to calculate direction vectors
+        norms = np.linalg.norm(positions, axis=1, keepdims=True)
+        directions = - positions / norms  # 각 point의 방향벡터
+        
+        # Calculate radial velocities using ego velocity
+        ego_vel_radial = np.sum(directions * self.ego_vel, axis=1)
+        
+        # print("Ego radial velocities:", ego_vel_radial)
+        # print("Doppler velocities:", doppler_vel)
+        
+        # --- method 별 similarity 계산 로직 ---
+        if method == 0:
+            # (1) 선형 + 클리핑 : similarity = 1 - (|ego - doppler| / (|doppler| + epsilon))
+            diff = np.abs(ego_vel_radial - doppler_vel)
+            denom = np.abs(doppler_vel) + epsilon
+            similarity = 1 - (diff / denom)
+            # 0~1 범위로 clip
+            similarity = np.clip(similarity, 0.0, 1.0)
+        
+        elif method == 1:
+            # (2) 지수(가우시안) 방식 : similarity = exp(-alpha * |ego - doppler|)
+            diff = np.abs(ego_vel_radial - doppler_vel)
+            similarity = np.exp(-alpha * diff)
+            # 지수함수 결과는 이미 0~1 범위이나, 안전차원에서 clip 가능
+            # similarity = np.clip(similarity, 0.0, 1.0)
+        
+        elif method == 2:
+            # (3) 로지스틱(시그모이드) 방식
+            # similarity = 1 / (1 + exp(alpha * (|ego - doppler| - beta)))
+            diff = np.abs(ego_vel_radial - doppler_vel)
+            similarity = 1.0 / (1.0 + np.exp(alpha * (diff - beta)))
+            # 이미 0~1 범위이지만, 필요시 clip 가능
+            # similarity = np.clip(similarity, 0.0, 1.0)
+        
+        else:
+            raise ValueError("method must be 0, 1, or 2.")
+        
+        # print(f"Similarity score (method={method}):", similarity)
+        return similarity
+    
+    def vel_cos_similarity(self):
+        """
+        Calculate cosine similarity between ego velocity and the direction of radial velocity
+        for each static point.
+        """
+        if self.ego_vel is None:
+            return ValueError("Ego velocity or static points are not calculated yet.")
+        
+        # Extract positions
+        positions = self.static_points[:, :3]  # (x, y, z)
+
+        # Normalize positions to calculate direction vectors
+        norms = np.linalg.norm(positions, axis=1, keepdims=True)
+        
+        zero_mask = (norms < 1e-6)
+        norms[zero_mask] = 1e-6
+        
+        directions = positions / norms  # Shape: (n, 3)
+        
+        ego_vel_norm_val = np.linalg.norm(self.ego_vel)
+        if ego_vel_norm_val < 1e-6:
+            return np.zeros(len(positions))        
+
+        # Normalize ego velocity
+        ego_vel_norm = self.ego_vel / ego_vel_norm_val
+
+        # Calculate cosine similarity for each point
+        cosine_similarities = np.sum(directions * ego_vel_norm, axis=1)
+        
+        # print("Cosine similarities:", cosine_similarities)
+        # print("min cosine similarity:", np.min(cosine_similarities))
+
+        return cosine_similarities

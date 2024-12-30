@@ -198,6 +198,7 @@ def run_pin_slam(config_path=None, dataset_name=None, sequence_name=None, seed=N
             if config.track_on:
                 tracking_result = tracker.tracking(dataset.cur_source_points, dataset.cur_pose_guess_torch, 
                                                    dataset.cur_source_colors, dataset.cur_source_normals,
+                                                   source_radar = dataset.cur_source_radar,
                                                    vis_result=config.o3d_vis_on and not config.o3d_vis_raw)
                 cur_pose_torch, cur_odom_cov, weight_pc_o3d, valid_flag = tracking_result
                 dataset.lose_track = not valid_flag
