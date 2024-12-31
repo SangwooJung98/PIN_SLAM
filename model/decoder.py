@@ -112,3 +112,7 @@ class Decoder(nn.Module):
     def regress_color(self, features):
         out = torch.sigmoid(self.mlp(features)) # sigmoid map to [0,1]
         return out
+    
+    def regress_radar(self, features):
+        out = torch.sigmoid(self.mlp(features)) # sigmoid map to [0,1]
+        return out

@@ -10,19 +10,19 @@ import sys
 
 class Ransac:
     def __init__(self, iterations=30, threshold=0.2, sample_size=3):
-        # Ransac Parameters
+        # RANSAC parameters
         self.iterations = iterations
         self.threshold = threshold
         self.sample_size = sample_size        
         
         # Results
         self.dynamic_points = None  # To store dynamic points
-        self.static_points = None  # To store static points
-        self.ego_vel = None # To store ego-vel from static points
+        self.static_points = None   # To store static points
+        self.ego_vel = None         # To store ego velocity from static points
         
     def process_pointcloud(self, raw_pointcloud: np.ndarray):
         """
-        Process 4D pointcloud data to separate static and dynamic object. 
+        Process 4D pointcloud data to separate static and dynamic objects.
         raw_pointcloud: numpy.ndarray of shape (n, 5), where each row is (x, y, z, doppler, rcs)
         """
         if raw_pointcloud.shape[1] != 5:
@@ -33,7 +33,7 @@ class Ransac:
         raw_pointcloud = self.filter_pointcloud_by_azimuth(raw_pointcloud)
         
         # print("Number of points after nearest_filtering:", len(raw_pointcloud))
-                
+        
         xyz = raw_pointcloud[:, :3]
         vr = raw_pointcloud[:, 3]
         
@@ -70,13 +70,11 @@ class Ransac:
             self.dynamic_points = raw_pointcloud[outliers]
             self.ego_vel = self.cal_ego_vel()
         
-        # print("Number of static points after RANSAC:", len(self.static_points))
+            # print("Number of static points after RANSAC:", len(self.static_points))
             # print("Number of static points before filtering:", len(self.static_points))
-            
             
             # test_static = self.filter_pointcloud_by_azimuth(self.static_points)
             # self.static_points = test_static
-            
             
         # print("shape of static: ", self.static_points.shape)
         # print("shape of dynamic:", self.dynamic_points.shape)
@@ -117,7 +115,6 @@ class Ransac:
                     continue
 
         cv2.imshow("Result Ransac", img)
-
         cv2.waitKey(1)
     
     def cal_ego_vel(self):
@@ -139,23 +136,24 @@ class Ransac:
         self.ego_vel = None
 
     def cart2spherical(self, x, y, z):
-        # radius
+        # Radius
         r = np.sqrt(x**2 + y**2 + z**2)
-        # azimuth
+        # Azimuth
         az = np.degrees(np.arctan2(y, x))
         az[az < 0] += 360
-        # elevation
+        # Elevation
         el = np.degrees(np.arcsin(z / r))
         return r, az, el
     
     # def filter_pointcloud_by_azimuth(self, pointcloud, az_res_deg=0.175):
     #     """
     #     pointcloud shape: (N, 4)
-    #     각 row는 [x, y, z, vr]
+    #     Each row is [x, y, z, vr]
 
-    #     azimuth bin 단위로만 필터링하되, elevation에 대해서는 별도 binning 없이 그대로 사용.
-    #     즉, (az_bin, el)의 조합으로 key를 만들고, 같은 az_bin과 동일한 el 값을 가지는 점이 있다면
-    #     그 중 가장 가까운 점 하나만 유지. el이 다르면(거의 항상 다를 것) 모두 유지.
+    #     Filter by azimuth bins only, without separate binning for elevation.
+    #     In other words, create a key from (az_bin, el). If there are multiple points 
+    #     with the same az_bin and the same el value, keep only the one that is closest.
+    #     If el is different (which is almost always the case), keep them all.
     #     """
 
     #     xyz = pointcloud[:, :3]
@@ -166,13 +164,13 @@ class Ransac:
 
     #     bin_dict = {}
     #     for i in range(len(pointcloud)):
-    #         key = (az_bin[i], el[i])  # az_bin과 el값의 조합으로 key를 만든다
+    #         key = (az_bin[i], el[i])  # Create a key from az_bin and el
     #         dist = r[i]
     #         if key not in bin_dict:
     #             bin_dict[key] = (dist, i)
     #         else:
-    #             # 같은 az_bin, 같은 el 값일 경우 더 가까운 점 선택
-    #             # (이 경우 거의 동일한 el을 가진 포인트는 드물지만 혹시 몰라서 처리)
+    #             # If there is already a point with the same az_bin, el value,
+    #             # keep the one that is closer
     #             if dist < bin_dict[key][0]:
     #                 bin_dict[key] = (dist, i)
 
@@ -184,13 +182,12 @@ class Ransac:
     def filter_pointcloud_by_azimuth(self, pointcloud, az_res_deg=0.175):
         """
         pointcloud shape: (N, 5)
-        각 row는 [x, y, z, doppler, rcs]
+        Each row is [x, y, z, doppler, rcs]
 
-        azimuth bin 단위로만 필터링하되,
-        elevation 값이 동일한 경우에만 그 중 가장 가까운 점을 하나 선택.
-        elevation 값이 다르면 모두 유지한다.
+        Filter by azimuth bins only, keeping only one point per bin if they have the same elevation.
+        If elevations differ, all are kept.
 
-        성능 개선을 위해 dictionary 대신 NumPy 정렬 및 unique를 사용한다.
+        Uses NumPy sorting and unique for performance instead of a dictionary.
         """
         xyz = pointcloud[:, :3]
         x, y, z = xyz[:, 0], xyz[:, 1], xyz[:, 2]
@@ -198,17 +195,15 @@ class Ransac:
         
         az_bin = (az // az_res_deg).astype(int)
         
-        # (az_bin, el) 그룹을 기준으로 정렬한 뒤, 같은 그룹 내에서 r이 최소인 포인트를 선택
+        # Sort by (az_bin, el, r) and keep only the closest point in each (az_bin, el) group
         data = np.column_stack((az_bin, el, r, np.arange(len(pointcloud))))
         
-        # data를 az_bin, el, r 순으로 정렬
-        # az_bin 오름차순 -> 같은 az_bin 내 el 오름차순 -> 같은 (az_bin, el) 내 r 오름차순
+        # Sort data by az_bin -> el -> r
         data_sorted = data[np.lexsort((data[:,2], data[:,1], data[:,0]))]
         
-        # (az_bin, el) 조합에서 처음 등장하는 인덱스가 r이 최소인 point
+        # The first occurrence of each (az_bin, el) after sorting is the point with minimum r
         _, unique_indices = np.unique(data_sorted[:, :2], axis=0, return_index=True)
         
-        # unique_indices가 가리키는 행만 선택
         selected = data_sorted[unique_indices]
         original_indices = selected[:, 3].astype(int)
 
@@ -220,7 +215,7 @@ class Ransac:
         """
         Calculate radial velocity from ego velocity and compare it with the estimated radial velocity (Doppler).
         Compute a similarity score for each point.
-        
+
         Parameters
         ----------
         method : int
@@ -228,55 +223,49 @@ class Ransac:
             1 -> Exponential (Gaussian-like)
             2 -> Logistic (Sigmoid-like)
         alpha : float
-            Method=1,2 에서 민감도를 조절하는 파라미터
-            (지수/로지스틱 함수에서 차이가 커질 때 0으로 떨어지는 속도 조절)
+            Sensitivity parameter for method=1,2
+            (Controls how quickly the similarity drops to 0 when there is a large difference in velocity)
         beta : float
-            Method=2 에서 로지스틱 함수의 중심점(차이가 beta 이상이 되면 유사도 급감)
+            The midpoint parameter for the logistic (sigmoid) function when method=2
+            (If difference exceeds beta, the similarity drops rapidly)
         epsilon : float
-            분모가 0이 되는 것을 방지하는 소량 값
+            A small value to prevent division by zero
         """
 
-        # 먼저 ego_vel, static_points가 잘 세팅되어 있는지 확인
+        # Check if ego_vel and static_points are well defined
         if self.ego_vel is None or self.static_points is None:
             raise ValueError("Ego velocity or static points are not calculated yet.")
         
-        # Extract positions and doppler velocities
+        # Extract positions and Doppler velocities
         positions = self.static_points[:, :3]
         doppler_vel = self.static_points[:, 3]
         
         # Normalize positions to calculate direction vectors
         norms = np.linalg.norm(positions, axis=1, keepdims=True)
-        directions = - positions / norms  # 각 point의 방향벡터
+        directions = - positions / norms  # Direction vectors for each point
         
         # Calculate radial velocities using ego velocity
         ego_vel_radial = np.sum(directions * self.ego_vel, axis=1)
         
-        # print("Ego radial velocities:", ego_vel_radial)
-        # print("Doppler velocities:", doppler_vel)
-        
-        # --- method 별 similarity 계산 로직 ---
+        # Method-specific similarity calculation
         if method == 0:
-            # (1) 선형 + 클리핑 : similarity = 1 - (|ego - doppler| / (|doppler| + epsilon))
+            # (1) Linear + Clipping: similarity = 1 - (|ego - doppler| / (|doppler| + epsilon))
             diff = np.abs(ego_vel_radial - doppler_vel)
             denom = np.abs(doppler_vel) + epsilon
             similarity = 1 - (diff / denom)
-            # 0~1 범위로 clip
             similarity = np.clip(similarity, 0.0, 1.0)
         
         elif method == 1:
-            # (2) 지수(가우시안) 방식 : similarity = exp(-alpha * |ego - doppler|)
+            # (2) Exponential (Gaussian-like): similarity = exp(-alpha * |ego - doppler|)
             diff = np.abs(ego_vel_radial - doppler_vel)
             similarity = np.exp(-alpha * diff)
-            # 지수함수 결과는 이미 0~1 범위이나, 안전차원에서 clip 가능
-            # similarity = np.clip(similarity, 0.0, 1.0)
+            # similarity = np.clip(similarity, 0.0, 1.0)  # optional
         
         elif method == 2:
-            # (3) 로지스틱(시그모이드) 방식
-            # similarity = 1 / (1 + exp(alpha * (|ego - doppler| - beta)))
+            # (3) Logistic (sigmoid): similarity = 1 / (1 + exp(alpha * (|ego - doppler| - beta)))
             diff = np.abs(ego_vel_radial - doppler_vel)
             similarity = 1.0 / (1.0 + np.exp(alpha * (diff - beta)))
-            # 이미 0~1 범위이지만, 필요시 clip 가능
-            # similarity = np.clip(similarity, 0.0, 1.0)
+            # similarity = np.clip(similarity, 0.0, 1.0)  # optional
         
         else:
             raise ValueError("method must be 0, 1, or 2.")
@@ -314,6 +303,6 @@ class Ransac:
         cosine_similarities = np.sum(directions * ego_vel_norm, axis=1)
         
         # print("Cosine similarities:", cosine_similarities)
-        # print("min cosine similarity:", np.min(cosine_similarities))
+        # print("min cosine similarity:", np.min(cosine_similarities)
 
         return cosine_similarities

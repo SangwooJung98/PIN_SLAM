@@ -139,6 +139,7 @@ def setup_optimizer(
     mlp_geo_param=None,
     mlp_sem_param=None,
     mlp_color_param=None,
+    mlp_radar_param=None,
     poses=None,
     lr_ratio=1.0,
 ) -> Optimizer:
@@ -169,6 +170,13 @@ def setup_optimizer(
             "weight_decay": weight_decay_mlp,
         }
         opt_setting.append(mlp_color_param_opt_dict)
+    if config.use_radar_intensity and mlp_radar_param is not None:
+        mlp_radar_param_opt_dict = {
+            "params": mlp_radar_param,
+            "lr": lr_cur,
+            "weight_decay": weight_decay_mlp,
+        }
+        opt_setting.append(mlp_radar_param_opt_dict)
     if poses is not None:
         poses_opt_dict = {"params": poses, "lr": lr_pose, "weight_decay": weight_decay}
         opt_setting.append(poses_opt_dict)
@@ -368,6 +376,12 @@ def write_to_json(filename: Path, content: dict):
 
 def color_to_intensity(colors: torch.tensor):
     intensity = 0.144 * colors[:, 0] + 0.299 * colors[:, 1] + 0.587 * colors[:, 2]
+    return intensity.unsqueeze(1)
+
+def rcs_to_intensity(rcs: torch.tensor):
+    # max rcs (power) is 655.35 (division of 100 for 16-bit)
+    # need to normalize to [0, 1]
+    intensity = rcs / 655.35
     return intensity.unsqueeze(1)
 
 

@@ -115,6 +115,7 @@ def run_pin_slam(config_path=None, dataset_name=None, sequence_name=None, seed=N
     geo_mlp = Decoder(config, config.geo_mlp_hidden_dim, config.geo_mlp_level, 1)
     sem_mlp = Decoder(config, config.sem_mlp_hidden_dim, config.sem_mlp_level, config.sem_class_count + 1) if config.semantic_on else None
     color_mlp = Decoder(config, config.color_mlp_hidden_dim, config.color_mlp_level, config.color_channel) if config.color_on else None
+    radar_mlp = Decoder(config, config.radar_mlp_hidden_dim, config.radar_mlp_level, 1) if config.use_radar_intensity else None
 
     # initialize the neural points
     neural_points: NeuralPoints = NeuralPoints(config)
@@ -133,7 +134,9 @@ def run_pin_slam(config_path=None, dataset_name=None, sequence_name=None, seed=N
             sem_mlp.load_state_dict(loaded_model["sem_decoder"])
         if 'color_decoder' in loaded_model.keys():
             color_mlp.load_state_dict(loaded_model["color_decoder"])
-        freeze_decoders(geo_mlp, sem_mlp, color_mlp, config)
+        if 'radar_decoder' in loaded_model.keys():
+            radar_mlp.load_state_dict(loaded_model["radar_decoder"])
+        freeze_decoders(geo_mlp, sem_mlp, color_mlp, radar_mlp, config)
         
         print("PIN Map loaded")  
         neural_points.recreate_hash(torch.zeros(3).to(config.device), None, True, False)
@@ -145,15 +148,15 @@ def run_pin_slam(config_path=None, dataset_name=None, sequence_name=None, seed=N
     dataset = SLAMDataset(config)
 
     # odometry tracker
-    tracker = Tracker(config, neural_points, geo_mlp, sem_mlp, color_mlp)
+    tracker = Tracker(config, neural_points, geo_mlp, sem_mlp, color_mlp, radar_mlp)
     if config.load_model and not mapping_on: 
         tracker.reg_local_map = False
 
     # mapper
-    mapper = Mapper(config, dataset, neural_points, geo_mlp, sem_mlp, color_mlp)
+    mapper = Mapper(config, dataset, neural_points, geo_mlp, sem_mlp, color_mlp, radar_mlp)
 
     # mesh reconstructor
-    mesher = Mesher(config, neural_points, geo_mlp, sem_mlp, color_mlp)
+    mesher = Mesher(config, neural_points, geo_mlp, sem_mlp, color_mlp, radar_mlp)
     cur_mesh = None
 
     # pose graph manager (for back-end optimization) initialization
@@ -318,7 +321,7 @@ def run_pin_slam(config_path=None, dataset_name=None, sequence_name=None, seed=N
             if dataset.stop_status:
                 cur_iter_num = max(1, cur_iter_num-10)
             if frame_id == config.freeze_after_frame: # freeze the decoder after certain frame 
-                freeze_decoders(geo_mlp, sem_mlp, color_mlp, config)
+                freeze_decoders(geo_mlp, sem_mlp, color_mlp, radar_mlp, config)
                 neural_points.compute_feature_principle_components(down_rate = 17) # prime number
 
             # conduct local bundle adjustment (with lower frequency)
@@ -454,7 +457,7 @@ def run_pin_slam(config_path=None, dataset_name=None, sequence_name=None, seed=N
         cur_mesh = mesher.recon_aabb_collections_mesh(chunks_aabb, output_mc_res_m, mesh_path, False, config.semantic_on, config.color_on, filter_isolated_mesh=True, mesh_min_nn=config.mesh_min_nn)
     neural_points.clear_temp() # clear temp data for output
     if config.save_map:
-        save_implicit_map(run_path, neural_points, geo_mlp, color_mlp, sem_mlp)
+        save_implicit_map(run_path, neural_points, geo_mlp, color_mlp, radar_mlp, sem_mlp)
         # lcd_npmc.save_context_dict(mapper.used_poses, run_path)
 
     if config.save_merged_pc:

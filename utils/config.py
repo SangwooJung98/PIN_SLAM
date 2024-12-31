@@ -54,6 +54,7 @@ class Config:
         
         # option for radar pointcloud including radial velocity
         self.is_radar = False
+        self.use_radar_intensity = False
 
         # preprocess
         # distance filter
@@ -143,6 +144,8 @@ class Config:
         self.sem_mlp_hidden_dim: int = 64
         self.color_mlp_level: int = 1
         self.color_mlp_hidden_dim: int = 64
+        self.radar_mlp_level: int = 1
+        self.radar_mlp_hidden_dim: int = 64
         # NOTE: For achieving better reconstruction results, you can increase the size of the MLPs,
         # or the feature dim of the neural point latent feature,
         # or the iteration number for mapping
@@ -354,6 +357,7 @@ class Config:
             self.deskew = config_args["setting"].get("deskew", self.deskew) # apply motion undistortion or not
             
             self.is_radar = config_args["setting"].get("is_radar", self.is_radar) # use radar radial velocity or not
+            self.use_radar_intensity = config_args["setting"].get("use_radar_intensity", self.use_radar_intensity) # use radar intensity or not
 
         # process
         if "process" in config_args:
@@ -416,6 +420,8 @@ class Config:
         self.color_mlp_hidden_dim = self.geo_mlp_hidden_dim
         self.sem_mlp_level = self.geo_mlp_level
         self.sem_mlp_hidden_dim = self.geo_mlp_hidden_dim
+        self.radar_mlp_level = self.geo_mlp_level
+        self.radar_mlp_hidden_dim = self.geo_mlp_hidden_dim
 
         # loss
         if "loss" in config_args:
@@ -451,8 +457,10 @@ class Config:
                 if self.photometric_loss_on:
                     self.photometric_loss_weight = float(config_args["tracker"].get("photo_weight", self.photometric_loss_weight))
                 self.consist_wieght_on = config_args["tracker"].get("consist_wieght", self.consist_wieght_on)
-            if self.is_radar:
-                # add radar loss .....
+            if self.use_radar_intensity:
+                self.radar_loss_on = config_args["tracker"].get("radar_loss", self.radar_loss_on)
+                if self.radar_loss_on:
+                    self.radar_loss_weight = float(config_args["tracker"].get("radar_weight", self.radar_loss_weight))
             self.uniform_motion_on = config_args["tracker"].get("uniform_motion_on", self.uniform_motion_on)
             self.source_vox_down_m = config_args["tracker"].get("source_vox_down_m", self.vox_down_m * 10.0)
             self.reg_iter_n = config_args["tracker"].get("iter_n", self.reg_iter_n)

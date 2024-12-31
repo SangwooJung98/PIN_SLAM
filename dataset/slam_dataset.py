@@ -301,18 +301,6 @@ class SLAMDataset(Dataset):
             self.cur_ego_vel = self.rs.ego_vel
             self.curr_ts = point_ts
             
-            # self.cur_doppler = torch.tensor(
-            #     self.rs.static_points[:, 3], device=self.device, dtype=self.dtype
-            # )
-            # self.cur_rcs = torch.tensor(
-            #     self.rs.static_points[:, 4], device=self.device, dtype=self.dtype
-            # )
-            # self.cur_doppler_uncertainty = torch.tensor(
-            #     self.rs.rad_vel_uncertainty(method = 0), device=self.device, dtype=self.dtype
-            # )
-            # self.cur_cos_similarity = torch.tensor(
-            #     self.rs.vel_cos_similarity(), device=self.device, dtype=self.dtype
-            # )
             point_cloud = np.hstack((
                 self.rs.static_points[:, :3],              # (N, 3) -> x, y, z
                 self.rs.static_points[:, 3].reshape(-1,1), # (N, 1) -> doppler
@@ -320,6 +308,7 @@ class SLAMDataset(Dataset):
                 self.rs.rad_vel_uncertainty(method=0).reshape(-1,1),   # (N, 1)
                 self.rs.vel_cos_similarity().reshape(-1,1)             # (N, 1)
             ))
+            # (N, 7) -> x, y, z, doppler, rcs, doppler_uncertainty, cos_similarity
 
         self.cur_point_cloud_torch = torch.tensor(
             point_cloud, device=self.device, dtype=self.dtype

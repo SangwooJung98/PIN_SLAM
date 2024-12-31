@@ -25,6 +25,7 @@ class Tracker:
         geo_decoder: Decoder,
         sem_decoder: Decoder,
         color_decoder: Decoder,
+        radar_decoder: Decoder,
     ):
 
         self.config = config
@@ -33,6 +34,7 @@ class Tracker:
         self.geo_decoder = geo_decoder
         self.sem_decoder = sem_decoder
         self.color_decoder = color_decoder
+        self.radar_decoder = radar_decoder
         self.device = config.device
         self.dtype = config.dtype
         # NOTE: use torch.float64 for all the transformations and poses
@@ -130,6 +132,7 @@ class Tracker:
                 valid_points_torch,
                 sdf_residual_cm,
                 photo_residual,
+                radar_residual,
             ) = reg_result
 
             T03 = get_time()
@@ -185,6 +188,8 @@ class Tracker:
             print("Odometry residual (cm):", sdf_residual_cm)
             if photo_residual is not None:
                 print("Photometric residual:", photo_residual)
+            if radar_residual is not None:
+                print("Radar residual:", radar_residual)
 
         if sdf_residual_cm > max_valid_final_sdf_residual_cm:
             if not self.silence:
@@ -223,6 +228,8 @@ class Tracker:
         query_sdf_grad=True,
         query_color=False,
         query_color_grad=False,
+        query_radar=False,
+        query_radar_grad=False,
         query_sem=False,
         query_mask=True,
         query_certainty=True,
@@ -259,6 +266,10 @@ class Tracker:
             )
         else:
             color_pred = None
+        if query_radar:
+            radar_pred = torch.zeros(sample_count, device=coord.device)
+        else:
+            radar_pred = None
         if query_mask:
             mc_mask = torch.zeros(sample_count, device=coord.device, dtype=torch.bool)
         else:
@@ -273,6 +284,12 @@ class Tracker:
             )
         else:
             color_grad = None
+        if query_radar_grad:
+            radar_grad = torch.zeros(
+                (sample_count, 1, 3), device=coord.device
+            ) # size of second term is the additional channel such as intensity. just add rcs for test
+        else:
+            radar_grad = None
         if query_certainty:
             certainty = torch.zeros(sample_count, device=coord.device)
         else:
@@ -282,12 +299,13 @@ class Tracker:
             head = n * bs
             tail = min((n + 1) * bs, sample_count)
             batch_coord = coord[head:tail, :]
-            if query_sdf_grad or query_color_grad:
+            if query_sdf_grad or query_color_grad or query_radar_grad:
                 batch_coord.requires_grad_(True)
 
             (
                 batch_geo_feature,
                 batch_color_feature,
+                batch_radar_feature,
                 weight_knn,
                 nn_count,
                 batch_certainty,
@@ -296,6 +314,7 @@ class Tracker:
                 training_mode=False,
                 query_locally=query_locally,
                 query_color_feature=query_color,
+                query_radar_feature=query_radar,
             )  # inference mode
 
             # print(weight_knn)
@@ -339,6 +358,14 @@ class Tracker:
                         batch_color_grad = get_gradient(batch_coord, batch_color[:, i])
                         color_grad[head:tail, i, :] = batch_color_grad.detach()
                 color_pred[head:tail] = batch_color.detach()
+            if query_radar:
+                batch_radar = self.radar_decoder.regress_radar(batch_radar_feature)
+                if not self.config.weighted_first:
+                    batch_radar = torch.sum(batch_radar * weight_knn, dim=1) # N, 1
+                if query_radar_grad:
+                    batch_radar_grad = get_gradient(batch_coord, batch_radar)
+                    radar_grad[head:tail] = batch_radar_grad.detach()
+                radar_pred[head:tail] = batch_radar.detach()
             if query_mask:
                 mc_mask[head:tail] = nn_count >= mask_min_nn_count
             if query_certainty:
@@ -349,6 +376,8 @@ class Tracker:
             sdf_grad,
             color_pred,
             color_grad,
+            radar_pred,
+            radar_grad,
             sem_pred,
             mc_mask,
             certainty,
@@ -375,8 +404,7 @@ class Tracker:
         colors_on = colors is not None and self.config.color_on
         photo_loss_on = self.config.photometric_loss_on and colors_on
         
-        
-        radar_on = radar is not None and self.config.is_radar
+        radar_on = radar is not None and self.config.use_radar_intensity
         radar_loss_on = self.config.radar_loss_on and radar_on
         
         (
@@ -384,6 +412,8 @@ class Tracker:
             sdf_grad,
             color_pred,
             color_grad,
+            radar_pred,
+            radar_grad,
             _,
             mask,
             certainty,
@@ -395,6 +425,8 @@ class Tracker:
             True,
             colors_on,
             photo_loss_on,
+            radar_on,
+            radar_loss_on,
             query_locally=self.reg_local_map,
             mask_min_nn_count=self.config.track_mask_query_nn_k,
         )  # fixme
@@ -517,22 +549,38 @@ class Tracker:
                 )  # color in [0,1]
                 # w_color[colors==0] = 1.
         
-        if radar_on:
-            # 여기서 radar point의 어떤 channel을 활용할지 정하면 됨. 
-            radar = radar[valid_idx, :]
+        w_radar = 1.0
+        if radar_on: # 여기서 radar point의 어떤 channel을 활용할지 정하면 됨. (use_radar_intensity version)
+            # first, just test for the rcs value...
+            # radar (N, 4) -> doppler, rcs,  doppler_uncertainty, cos_similarity
+            radar = radar[valid_idx, 1].unsqueeze(1) # test for rcs value
+            radar_pred = radar_pred[valid_idx].unsqueeze(1)
+            
+            if radar_loss_on:
+                radar_grad = radar_grad[valid_idx].unsqueeze(1)
+                
+            elif self.config.consist_wieght_on:
+                w_radar = torch.exp(
+                    -torch.mean(torch.abs(radar - radar_pred), dim=-1)
+                ).unsqueeze(
+                    1
+                ) # radar in [0,1]
+                # w_radar[radar==0] = 1.
 
         # sdf standard deviation as the weight (not used)
         # w_std = (std_mean / sdf_std).unsqueeze(1)
         w_std = 1.0
 
         # print(w_color)
-        w = w_res * w_grad * w_normal * w_color * w_certainty * w_std
+        # w = w_res * w_grad * w_normal * w_color * w_certainty * w_std
+        w = w_res * w_grad * w_normal * w_color * w_radar * w_certainty * w_std
         if not isinstance(w, (float)):
             w /= 2.0 * torch.mean(w)  # normalize weight for visualization
 
         T2 = get_time()
 
         color_residual_mean = None
+        radar_residual_mean = None
         if photo_loss_on:
             color_residual = color_pred - colors
             color_residual_mean = torch.mean(torch.abs(color_residual)).item()
@@ -545,6 +593,22 @@ class Tracker:
                 color_residual,
                 w,
                 w_photo_loss=self.config.photometric_loss_weight,
+                lm_lambda=lm_lambda,
+            )
+            cov_mat = None
+            eigenvalues = None
+        elif radar_loss_on:
+            radar_residual = radar_pred - radar
+            radar_residual_mean = torch.mean(torch.abs(radar_residual)).item()
+            T = implicit_radar_reg(
+                valid_points,
+                sdf_grad,
+                sdf_residual,
+                radar,
+                radar_grad,
+                radar_residual,
+                w,
+                w_radar_loss=self.config.radar_loss_weight,
                 lm_lambda=lm_lambda,
             )
             cov_mat = None
@@ -615,6 +679,7 @@ class Tracker:
             valid_points,
             sdf_residual_mean_cm,
             color_residual_mean,
+            radar_residual_mean,
         )
 
 
@@ -750,6 +815,49 @@ def implicit_color_reg(
 
     return T
 
+# function for radar registration
+def implicit_radar_reg(
+    points,
+    sdf_grad,
+    sdf_residual,
+    radar,
+    radar_grad,
+    radar_residual,
+    weight,
+    w_radar_loss=0.1,
+    lm_lambda=0.0,
+):
+    geo_cross = torch.cross(points, sdf_grad)
+    J_geo = torch.cat([geo_cross, sdf_grad], -1)  # first rotation, then translation
+    N_geo = J_geo.T @ (weight * J_geo)
+    g_geo = -(J_geo * weight).T @ sdf_residual
+    
+    N = N_geo
+    g = g_geo
+    
+    radar_channel = radar.shape[1] # currently, its only 1 channel (rcs)
+    for i in range(
+        radar_channel
+    ):
+        radar_cross_channel = torch.cross(
+            points, radar_grad[:, i, :]
+        )  # first rotation, then translation
+        J_radar_channel = torch.cat([radar_cross_channel, radar_grad[:, i]], -1)
+        N_radar_channel = J_radar_channel.T @ (weight * J_radar_channel)
+        g_radar_channel = -(J_radar_channel * weight).T @ radar_residual[:, i]
+        N += w_radar_loss * N_radar_channel
+        g += w_radar_loss * g_radar_channel
+    
+    N += lm_lambda * torch.diag(torch.diag(N))
+    
+    t = torch.linalg.inv(N.to(dtype=torch.float64)) @ g.to(dtype=torch.float64)  # 6dof
+    
+    T = torch.eye(4, device=points.device, dtype=torch.float64)
+    T[:3, :3] = expmap(t[:3])  # rotation part
+    T[:3, 3] = t[3:]  # translation part
+    
+    return T
+    
 
 # continous time registration (motion undistortion deskew is not needed then)
 # point-wise timestamp required

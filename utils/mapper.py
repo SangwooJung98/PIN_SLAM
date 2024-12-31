@@ -39,6 +39,7 @@ class Mapper:
         geo_mlp: Decoder,
         sem_mlp: Decoder,
         color_mlp: Decoder,
+        radar_mlp: Decoder,
     ):
 
         self.config = config
@@ -48,6 +49,7 @@ class Mapper:
         self.geo_mlp = geo_mlp
         self.sem_mlp = sem_mlp
         self.color_mlp = color_mlp
+        self.radar_mlp = radar_mlp
         self.device = config.device
         self.dtype = config.dtype
         self.used_poses = None
@@ -91,6 +93,9 @@ class Mapper:
         self.sem_label_pool = torch.empty((0), device=self.device, dtype=torch.int)
         self.normal_label_pool = torch.empty(
             (0, 3), device=self.device, dtype=self.dtype
+        )
+        self.radar_label_pool = torch.empty(
+            (0, 1), device=self.device, dtype=self.dtype
         )
         self.weight_pool = torch.empty((0), device=self.device, dtype=self.dtype)
         self.time_pool = torch.empty((0), device=self.device, dtype=torch.int)
@@ -609,6 +614,10 @@ class Mapper:
             color_mlp_param = list(self.color_mlp.parameters())
         else:
             color_mlp_param = None
+        if self.config.use_radar_intensity:
+            radar_mlp_param = list(self.radar_mlp.parameters())
+        else:
+            radar_mlp_param = None
 
         opt = setup_optimizer(
             self.config,
@@ -616,6 +625,7 @@ class Mapper:
             geo_mlp_param,
             sem_mlp_param,
             color_mlp_param,
+            radar_mlp_param,
         )
 
         for iter in tqdm(range(iter_count), disable=self.silence):

@@ -39,6 +39,9 @@ class NeuralPoints(nn.Module):
 
         self.color_feature_dim = config.feature_dim
         self.color_feature_std = config.feature_std
+        
+        self.radar_feature_dim = config.feature_dim
+        self.radar_feature_std = config.feature_std
 
         if config.use_gaussian_pe:
             self.position_encoder_geo = GaussianFourierFeatures(config)
@@ -100,9 +103,16 @@ class NeuralPoints(nn.Module):
             )
         else:
             self.color_features = None
+        if self.config.use_radar_intensity:
+            self.radar_features = torch.empty(
+                (1, 1), dtype=self.dtype, device=self.device # only one feature for test (rcs)
+            )
+        else:
+            self.radar_features = None
         
         # feature pca
         self.geo_feature_pca = self.color_feature_pca = None
+        self.radar_feature_pca = None
         
         # here, the ts represent the actually processed frame id (not neccessarily the frame id of the dataset)
         self.point_ts_create = torch.empty(
@@ -122,6 +132,7 @@ class NeuralPoints(nn.Module):
         )  # as quaternion
         self.local_geo_features = nn.Parameter()
         self.local_color_features = nn.Parameter()
+        self.local_radar_features = nn.Parameter()
         self.local_point_certainties = torch.empty(
             (0), dtype=self.dtype, device=self.device
         )
@@ -159,6 +170,8 @@ class NeuralPoints(nn.Module):
         )  # feature plus neural point position and orientation
         if self.color_features is not None:
             point_dim += self.config.feature_dim  # also include the color feature
+        if self.radar_features is not None:
+            point_dim += 1 # also include the radar feature (rcs)
         cur_memory = neural_point_count * point_dim * 4 / 1024 / 1024  # as float32
         if not self.silence:
             print("Memory consumption: %f (MB)" % cur_memory)
@@ -170,6 +183,9 @@ class NeuralPoints(nn.Module):
 
         if self.color_features is not None:
             _, self.color_feature_pca = feature_pca_torch((self.color_features)[:-1], down_rate=down_rate, project_data=False)
+        
+        if self.radar_features is not None:
+            _, self.radar_feature_pca = feature_pca_torch((self.radar_features)[:-1], down_rate=down_rate, project_data=False)
 
 
     def get_neural_points_o3d(
@@ -395,6 +411,17 @@ class NeuralPoints(nn.Module):
                 dtype=self.dtype,
             )
             self.color_features = torch.cat((self.color_features[:-1], new_fts), 0)
+        
+        # for radar (test for rcs...)
+        if self.radar_features is not None:
+            new_fts = self.radar_feature_std * torch.randn(
+                new_point_count + 1,
+                1,
+                device=self.device,
+                dtype=self.dtype,
+            )
+            self.radar_features = torch.cat((self.radar_features[:-1], new_fts), 0)
+            
 
         new_certainty = torch.zeros(
             new_point_count, device=self.device, dtype=self.dtype, requires_grad=False
@@ -481,6 +508,8 @@ class NeuralPoints(nn.Module):
         self.local_geo_features = nn.Parameter(self.geo_features[local_mask])
         if self.color_features is not None:
             self.local_color_features = nn.Parameter(self.color_features[local_mask])
+        if self.radar_features is not None:
+            self.local_radar_features = nn.Parameter(self.radar_features[local_mask])
 
         self.local_orientation = sensor_orientation  # not used
 
@@ -492,6 +521,8 @@ class NeuralPoints(nn.Module):
         self.geo_features[local_mask] = self.local_geo_features.data
         if self.color_features is not None:
             self.color_features[local_mask] = self.local_color_features.data
+        if self.radar_features is not None:
+            self.radar_features[local_mask] = self.local_radar_features.data
         self.point_certainties[local_mask[:-1]] = self.local_point_certainties
         self.point_ts_update[local_mask[:-1]] = self.local_point_ts_update
 
@@ -505,15 +536,17 @@ class NeuralPoints(nn.Module):
         query_locally: bool = True,
         query_geo_feature: bool = True,
         query_color_feature: bool = False,
+        query_radar_feature: bool = False,
     ):
 
-        if not query_geo_feature and not query_color_feature:
+        if not query_geo_feature and not query_color_feature and not query_radar_feature:
             sys.exit("you need to at least query one kind of feature")
 
         batch_size = query_points.shape[0]
 
         geo_features_vector = None
         color_features_vector = None
+        radar_features_vector = None
 
         nn_k = self.config.query_nn_k
 
@@ -583,6 +616,20 @@ class NeuralPoints(nn.Module):
                 color_features[valid_mask] = self.color_features[idx[valid_mask]]
             if self.config.layer_norm_on:
                 color_features = F.layer_norm(color_features, [self.color_feature_dim])
+        if query_radar_feature and self.radar_features is not None:
+            radar_features = torch.zeros(
+                batch_size,
+                nn_k,
+                1,
+                device=self.device,
+                dtype=self.dtype,
+            ) # [N, K, F] (for rcs only)
+            if query_locally:
+                radar_features[valid_mask] = self.local_radar_features[idx[valid_mask]]
+            else:
+                radar_features[valid_mask] = self.radar_features[idx[valid_mask]]
+            if self.config.layer_norm_on:
+                radar_features = F.layer_norm(radar_features, [1])
 
         N, K = valid_mask.shape  # K = nn_k here
 
@@ -621,6 +668,10 @@ class NeuralPoints(nn.Module):
         if query_color_feature and self.color_features is not None:
             color_features_vector = torch.cat(
                 (color_features, neighb_vector), dim=2
+            )  # [N, K, F+P]
+        if query_radar_feature and self.radar_features is not None:
+            radar_features_vector = torch.cat(
+                (radar_features, neighb_vector), dim=2
             )  # [N, K, F+P]
 
         eps = 1e-15  # avoid nan (dividing by 0)
@@ -690,6 +741,11 @@ class NeuralPoints(nn.Module):
                 color_features_vector = torch.sum(
                     color_features_vector * weight_vector, dim=1
                 )  # [N, F+P]
+                
+            if query_radar_feature and self.radar_features is not None:
+                radar_features_vector = torch.sum(
+                    radar_features_vector * weight_vector, dim=1
+                )   # [N, F+P]
 
         # T3 = get_time()
 
@@ -701,6 +757,7 @@ class NeuralPoints(nn.Module):
         return (
             geo_features_vector,
             color_features_vector,
+            radar_features_vector,
             weight_vector,
             nn_counts,
             queried_certainty,
@@ -740,6 +797,8 @@ class NeuralPoints(nn.Module):
             self.geo_features = self.geo_features[~prune_mask]
             if self.config.color_on:
                 self.color_features = self.color_features[~prune_mask]
+            if self.config.use_radar_intensity:
+                self.radar_features = self.radar_features[~prune_mask]
             # recreate hash and local map then
             return True
         return False
@@ -833,6 +892,10 @@ class NeuralPoints(nn.Module):
                 self.color_features = self.color_features[
                     sample_idx_pad
                 ]  # with padding in the end
+            if self.radar_features is not None:
+                self.radar_features = self.radar_features[
+                    sample_idx_pad
+                ] # with padding in the end
 
             new_point_count = self.neural_points.shape[0]
 
@@ -966,6 +1029,7 @@ class NeuralPoints(nn.Module):
         self.local_point_orientations = None
         self.local_geo_features = nn.Parameter()
         self.local_color_features = nn.Parameter()
+        self.local_radar_features = nn.Parameter()
         self.local_point_certainties = None
         self.local_point_ts_update = None
         self.local_mask = None
