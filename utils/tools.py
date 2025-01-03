@@ -261,7 +261,7 @@ def unfreeze_model(model: nn.Module):
             param.requires_grad = True
 
 
-def freeze_decoders(geo_decoder, sem_decoder, color_decoder, config):
+def freeze_decoders(geo_decoder, sem_decoder, color_decoder, radar_decoder, config):
     if not config.silence:
         print("Freeze the decoder")
     freeze_model(geo_decoder)  # fixed the geo decoder
@@ -269,6 +269,8 @@ def freeze_decoders(geo_decoder, sem_decoder, color_decoder, config):
         freeze_model(sem_decoder)  # fixed the sem decoder
     if config.color_on:
         freeze_model(color_decoder)  # fixed the color decoder
+    if config.use_radar_intensity:
+        freeze_model(radar_decoder) # fixed the radar decoder
 
 
 def save_checkpoint(
@@ -296,12 +298,14 @@ def save_checkpoint(
 
 
 def save_implicit_map(
-    run_path, neural_points, geo_decoder, color_decoder=None, sem_decoder=None
+    run_path, neural_points, geo_decoder, color_decoder=None, radar_decoder=None, sem_decoder=None
 ):
 
     map_dict = {"neural_points": neural_points, "geo_decoder": geo_decoder.state_dict()}
     if color_decoder is not None:
         map_dict["color_decoder"] = color_decoder.state_dict()
+    if radar_decoder is not None:
+        map_dict["radar_decoder"] = radar_decoder.state_dict()
     if sem_decoder is not None:
         map_dict["sem_decoder"] = sem_decoder.state_dict()
 
@@ -327,6 +331,9 @@ def load_decoder(config, geo_mlp, sem_mlp, color_mlp):
     if config.color_on:
         color_mlp.load_state_dict(loaded_model["color_decoder"])
         freeze_model(color_mlp)  # fixed the decoder
+    if config.use_radar_intensity:
+        radar_mlp.load_state_dict(loaded_model["radar_decoder"])
+        freeze_model(radar_mlp)
 
 
 def get_time():

@@ -186,6 +186,7 @@ class Config:
 
         self.weight_s: float = 1.0  # weight for semantic classification loss
         self.weight_i: float = 1.0  # weight for color or intensity regression loss
+        self.weight_r: float = 1.0  # weight for radar intensity regression loss
 
         # optimizer
         self.mapping_freq_frame: int = 1

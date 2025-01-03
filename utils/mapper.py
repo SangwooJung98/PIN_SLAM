@@ -21,6 +21,7 @@ from model.neural_points import NeuralPoints
 from utils.config import Config
 from utils.data_sampler import DataSampler
 from utils.loss import color_diff_loss, sdf_bce_loss, sdf_diff_loss, sdf_zhong_loss
+from utils.loss import radar_rcs_loss
 from utils.tools import (
     get_gradient,
     get_time,
@@ -90,12 +91,12 @@ class Mapper:
         self.color_pool = torch.empty(
             (0, self.config.color_channel), device=self.device, dtype=self.dtype
         )
+        self.radar_pool = torch.empty(
+            (0, 1), device=self.device, dtype=self.dtype # currently 1 channel => RCS test
+        )
         self.sem_label_pool = torch.empty((0), device=self.device, dtype=torch.int)
         self.normal_label_pool = torch.empty(
             (0, 3), device=self.device, dtype=self.dtype
-        )
-        self.radar_label_pool = torch.empty(
-            (0, 1), device=self.device, dtype=self.dtype
         )
         self.weight_pool = torch.empty((0), device=self.device, dtype=self.dtype)
         self.time_pool = torch.empty((0), device=self.device, dtype=torch.int)
@@ -105,7 +106,7 @@ class Mapper:
         if type_2_on:
             points_torch.requires_grad_(True)
 
-        geo_feature, _, weight_knn, _, certainty = self.neural_points.query_feature(
+        geo_feature, _, _, weight_knn, _, certainty = self.neural_points.query_feature(
             points_torch, training_mode=False
         )
 
@@ -205,6 +206,12 @@ class Mapper:
             frame_color_torch = point_cloud_torch[:, 3:]
             if filter_dynamic:
                 frame_color_torch = frame_color_torch[self.static_mask]
+        
+        frame_radar_torch = None
+        if self.config.use_radar_intensity:
+            frame_radar_torch = point_cloud_torch[:, 4].unsqueeze(1)  # currently only RCS is used (1 channel)
+            if filter_dynamic:
+                frame_radar_torch = frame_radar_torch[self.static_mask]
 
         if frame_label_torch is not None:
             if filter_dynamic:
@@ -223,9 +230,10 @@ class Mapper:
             normal_label,
             sem_label,
             color_label,
+            radar_label,
             weight,
         ) = self.sampler.sample(
-            frame_point_torch, frame_normal_torch, frame_label_torch, frame_color_torch
+            frame_point_torch, frame_normal_torch, frame_label_torch, frame_color_torch, frame_radar_torch
         )
         # coord is in sensor local frame
 
@@ -288,6 +296,10 @@ class Mapper:
             self.color_pool = torch.cat((self.color_pool, color_label), 0)
         else:
             self.color_pool = None
+        if radar_label is not None:
+            self.radar_pool = torch.cat((self.radar_pool, radar_label), 0)
+        else:
+            self.radar_pool = None
         if normal_label is not None:
             self.normal_label_pool = torch.cat(
                 (self.normal_label_pool, normal_label), 0
@@ -353,6 +365,8 @@ class Mapper:
                 self.sem_label_pool = self.sem_label_pool[filter_mask]
             if color_label is not None:
                 self.color_pool = self.color_pool[filter_mask]
+            if radar_label is not None:
+                self.radar_pool = self.radar_pool[filter_mask]
 
             cur_sample_filter_mask = filter_mask[
                 -self.cur_sample_count :
@@ -498,12 +512,16 @@ class Mapper:
             color_label = self.color_pool[index]
         else:
             color_label = None
+        if self.radar_pool is not None:
+            radar_label = self.radar_pool[index]
+        else:
+            radar_label = None
         if self.normal_label_pool is not None:
             normal_label = self.normal_label_pool[index, :]
         else:
             normal_label = None
 
-        return coord, sdf_label, ts, normal_label, sem_label, color_label, weight
+        return coord, sdf_label, ts, normal_label, sem_label, color_label, radar_label, weight
 
     # get a batch of training samples (only those measured end points) and labels for local bundle adjustment
     def get_ba_samples(self, subsample_count):
@@ -596,6 +614,7 @@ class Mapper:
         self.time_pool = None
         self.sem_label_pool = None
         self.color_pool = None
+        self.radar_pool = None
         self.normal_label_pool = None
 
     # PIN map online training (mapping) given the fixed pose
@@ -633,7 +652,7 @@ class Mapper:
 
             T00 = get_time()
             # we do not use the ray rendering loss here for the incremental mapping
-            coord, sdf_label, ts, _, sem_label, color_label, weight = self.get_batch(
+            coord, sdf_label, ts, _, sem_label, color_label, radar_label, weight = self.get_batch(
                 global_coord=not self.ba_done_flag
             )  # coord here is in global frame if no ba pose update
 
@@ -653,11 +672,13 @@ class Mapper:
             (
                 geo_feature,
                 color_feature,
+                radar_feature, 
                 weight_knn,
                 _,
                 certainty,
             ) = self.neural_points.query_feature(
-                coord, ts, query_color_feature=self.config.color_on
+                coord, ts, query_color_feature=self.config.color_on, 
+                query_radar_feature=self.config.use_radar_intensity
             )
 
             T02 = get_time()
@@ -677,6 +698,10 @@ class Mapper:
                 color_pred = self.color_mlp.regress_color(color_feature)  # [N, K, C]
                 if not self.config.weighted_first:
                     color_pred = torch.sum(color_pred * weight_knn, dim=1)  # N, C
+            if self.config.use_radar_intensity:
+                radar_pred = self.radar_mlp.regress_radar(radar_feature) # [N, K, 1]
+                if not self.config.weighted_first:
+                    radar_pred = torch.sum(radar_pred * weight_knn, dim=1)
 
             surface_mask = (
                 torch.abs(sdf_label) < self.config.surface_sample_range_m
@@ -723,6 +748,7 @@ class Mapper:
                 (
                     geo_feature_near,
                     _,
+                    _, # radar
                     weight_knn,
                     _,
                     _,
@@ -818,6 +844,18 @@ class Mapper:
                     l2_loss=False,
                 )
                 cur_loss += self.config.weight_i * color_loss
+            
+            # optional radar intensity loss
+            radar_loss = 0.0
+            if self.config.use_radar_intensity and self.config.weight_r > 0:
+                radar_loss = radar_rcs_loss(
+                    radar_pred[surface_mask],
+                    radar_label[surface_mask],
+                    weight[surface_mask],
+                    self.config.loss_weight_on,
+                    l2_loss=False,
+                )
+                cur_loss += self.config.weight_r * radar_loss
 
             T04 = get_time()
 
@@ -946,7 +984,7 @@ class Mapper:
 
     # short-hand function
     def sdf(self, x, get_std=False, min_nn_count=1, accumulate_stability=False):
-        geo_feature, _, weight_knn, nn_count, _ = self.neural_points.query_feature(x, training_mode=accumulate_stability)
+        geo_feature, _, _, weight_knn, nn_count, _ = self.neural_points.query_feature(x, training_mode=accumulate_stability)
         sdf_pred = self.geo_mlp.sdf(geo_feature)    
         # predict the scaled sdf with the feature # [N, K, 1]
         sdf_std = None

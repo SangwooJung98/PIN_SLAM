@@ -15,7 +15,7 @@ class DataSampler:
         self.config = config
         self.dev = config.device
 
-    def sample(self, points_torch, normal_torch, sem_label_torch, color_torch):
+    def sample(self, points_torch, normal_torch, sem_label_torch, color_torch, radar_torch):
         """
         Sample training sample points for current scan, get the labels for online training
         input and output are all torch tensors
@@ -63,6 +63,9 @@ class DataSampler:
         if color_torch is not None:
             color_channel = color_torch.shape[1]
             surface_color_tensor = color_torch.repeat(surface_sample_n, 1)
+        if radar_torch is not None:
+            radar_channel = radar_torch.shape[1] # currently 1 (test for rcs)
+            surface_radar_tensor = radar_torch.repeat(surface_sample_n, 1)
 
         # Part 2. free space (in front of surface) uniform sampling
         # if you want to reconstruct the thin objects (like poles, tree branches) well, you need more freespace samples to have
@@ -86,6 +89,10 @@ class DataSampler:
             free_color_front = torch.zeros(
                 point_num * freespace_front_sample_n, color_channel, device=dev
             )
+        if radar_torch is not None:
+            free_radar_front = torch.zeros(
+                point_num * freespace_front_sample_n, radar_channel, device=dev
+            )
 
         # Part 3. free space (behind surface) uniform sampling
         repeated_dist = distances.repeat(freespace_behind_sample_n, 1)
@@ -107,6 +114,10 @@ class DataSampler:
         if color_torch is not None:
             free_color_behind = torch.zeros(
                 point_num * freespace_behind_sample_n, color_channel, device=dev
+            )
+        if radar_torch is not None:
+            free_radar_behind = torch.zeros(
+                point_num * freespace_behind_sample_n, radar_channel, device=dev
             )
 
         # T1 = get_time()
@@ -206,6 +217,19 @@ class DataSampler:
                 ),
                 0,
             )
+        
+        # assign the radar label to the close-to-surface samples
+        radar_tensor = None
+        if radar_torch is not None:
+            radar_tensor = torch.cat(
+                (
+                    radar_torch,
+                    surface_radar_tensor,
+                    free_radar_front,
+                    free_radar_behind,
+                ),
+                0,
+            )
 
         # T2 = get_time()
         # Convert from the all ray surface + all ray free order to the ray-wise (surface + free) order
@@ -240,6 +264,12 @@ class DataSampler:
                 .transpose(0, 1)
                 .reshape(-1, color_channel)
             )
+        if radar_torch is not None:
+            radar_tensor = (
+                radar_tensor.reshape(all_sample_n, -1, radar_channel)
+                .transpose(0, 1)
+                .reshape(-1, radar_channel)
+            )
 
         # ray distance (distances) is not repeated
 
@@ -256,5 +286,6 @@ class DataSampler:
             normal_label_tensor,
             sem_label_tensor,
             color_tensor,
+            radar_tensor,
             weight_tensor,
         )

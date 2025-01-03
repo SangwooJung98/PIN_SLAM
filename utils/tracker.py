@@ -267,7 +267,7 @@ class Tracker:
         else:
             color_pred = None
         if query_radar:
-            radar_pred = torch.zeros(sample_count, device=coord.device)
+            radar_pred = torch.zeros(sample_count, 1, device=coord.device) # only for rcs (test)
         else:
             radar_pred = None
         if query_mask:
@@ -364,7 +364,7 @@ class Tracker:
                     batch_radar = torch.sum(batch_radar * weight_knn, dim=1) # N, 1
                 if query_radar_grad:
                     batch_radar_grad = get_gradient(batch_coord, batch_radar)
-                    radar_grad[head:tail] = batch_radar_grad.detach()
+                    radar_grad[head:tail, 0, :] = batch_radar_grad.detach()
                 radar_pred[head:tail] = batch_radar.detach()
             if query_mask:
                 mc_mask[head:tail] = nn_count >= mask_min_nn_count
@@ -553,12 +553,14 @@ class Tracker:
         if radar_on: # 여기서 radar point의 어떤 channel을 활용할지 정하면 됨. (use_radar_intensity version)
             # first, just test for the rcs value...
             # radar (N, 4) -> doppler, rcs,  doppler_uncertainty, cos_similarity
+            
             radar = radar[valid_idx, 1].unsqueeze(1) # test for rcs value
-            radar_pred = radar_pred[valid_idx].unsqueeze(1)
+            radar_pred = radar_pred[valid_idx]
             
             if radar_loss_on:
-                radar_grad = radar_grad[valid_idx].unsqueeze(1)
+                radar_grad = radar_grad[valid_idx]
                 
+                # print(radar_grad.shape)
             elif self.config.consist_wieght_on:
                 w_radar = torch.exp(
                     -torch.mean(torch.abs(radar - radar_pred), dim=-1)
@@ -720,11 +722,15 @@ def implicit_reg(
         eigenvalues (`torch.tensor'):
             3 dim translation part of the eigenvalues for the registration degerancy check
     """
-
+    # print("implicit_reg part")
+    # print(points.shape)
+    # print(sdf_grad.shape)
     cross = torch.cross(points, sdf_grad, dim=-1)  # N,3 x N,3
     J_mat = torch.cat(
         [cross, sdf_grad], -1
     )  # The Jacobian matrix # first rotation, then translation # N, 6
+    # print(J_mat.shape)
+    # print(weight.shape)
     N_mat = J_mat.T @ (
         weight * J_mat
     )  # approximate Hessian matrix # first rot, then tran # 6, 6

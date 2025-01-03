@@ -26,6 +26,7 @@ class Mesher:
         geo_decoder: Decoder,
         sem_decoder: Decoder,
         color_decoder: Decoder,
+        radar_decoder: Decoder,
     ):
 
         self.config = config
@@ -34,6 +35,7 @@ class Mesher:
         self.geo_decoder = geo_decoder
         self.sem_decoder = sem_decoder
         self.color_decoder = color_decoder
+        self.radar_decoder = radar_decoder
         self.device = config.device
         self.cur_device = self.device
         self.dtype = config.dtype
@@ -46,6 +48,7 @@ class Mesher:
         query_sdf=True,
         query_sem=False,
         query_color=False,
+        query_radar=False,
         query_mask=True,
         query_locally=False,
         mask_min_nn_count: int = 4,
@@ -85,6 +88,13 @@ class Mesher:
                 color_pred = np.zeros((sample_count, self.config.color_channel))
         else:
             color_pred = None
+        if query_radar:
+            if out_torch:
+                radar_pred = torch.zeros(sample_count)
+            else:
+                radar_pred = np.zeros(sample_count)
+        else:
+            radar_pred = None
         if query_mask:
             if out_torch:
                 mc_mask = torch.zeros(sample_count)
@@ -104,6 +114,7 @@ class Mesher:
                 (
                     batch_geo_feature,
                     batch_color_feature,
+                    batch_radar_feature,
                     weight_knn,
                     nn_count,
                     _,
@@ -113,6 +124,7 @@ class Mesher:
                     query_locally=query_locally,  # inference mode, query globally
                     query_geo_feature=query_sdf or query_sem,
                     query_color_feature=query_color,
+                    query_radar_feature=query_radar,
                 )
 
                 pred_mask = nn_count >= 1  # only query sdf here
@@ -156,6 +168,14 @@ class Mesher:
                         color_pred[head:tail] = (
                             batch_color.detach().cpu().numpy().astype(dtype=np.float64)
                         )
+                if query_radar:
+                    batch_radar = self.radar_decoder.regress_radar(batch_radar_feature)
+                    if not self.config.weighted_first:
+                        batch_radar = torch.sum(batch_radar * weight_knn, dim=1) # N, C
+                    if out_torch:
+                        radar_pred[head:tail] = batch_radar.detach()
+                    else:
+                        radar_pred[head:tail] = batch_radar.detach().cpu().numpy().astype(dtype=np.float64)
                 if query_mask:
                     # do marching cubes only when there are at least K near neural points
                     mask_mc = nn_count >= mask_min_nn_count
@@ -164,7 +184,7 @@ class Mesher:
                     else:
                         mc_mask[head:tail] = mask_mc.detach().cpu().numpy()
 
-        return sdf_pred, sem_pred, color_pred, mc_mask
+        return sdf_pred, sem_pred, color_pred, radar_pred, mc_mask
 
     def get_query_from_bbx(self, bbx, voxel_size, pad_voxel=0, skip_top_voxel=0):
         """
@@ -329,7 +349,7 @@ class Mesher:
 
         return sdf_map_pc
 
-    def assign_to_bbx(self, sdf_pred, sem_pred, color_pred, mc_mask, voxel_num_xyz):
+    def assign_to_bbx(self, sdf_pred, sem_pred, color_pred, radar_pred, mc_mask, voxel_num_xyz):
         """assign the queried sdf, semantic label and marching cubes mask back to the 3D grids in the specified bounding box
         Args:
             sdf_pred: Ndim np.array/torch.tensor
@@ -356,13 +376,18 @@ class Mesher:
             color_pred = color_pred.reshape(
                 voxel_num_xyz[0], voxel_num_xyz[1], voxel_num_xyz[2]
             )
+        
+        if radar_pred is not None:
+            radar_pred = radar_pred.reshape(
+                voxel_num_xyz[0], voxel_num_xyz[1], voxel_num_xyz[2]
+            )
 
         if mc_mask is not None:
             mc_mask = mc_mask.reshape(
                 voxel_num_xyz[0], voxel_num_xyz[1], voxel_num_xyz[2]
             )
 
-        return sdf_pred, sem_pred, color_pred, mc_mask
+        return sdf_pred, sem_pred, color_pred, radar_pred, mc_mask
 
     def mc_mesh(self, mc_sdf, mc_mask, voxel_size, mc_origin):
         """use the marching cubes algorithm to get mesh vertices and faces
@@ -400,8 +425,8 @@ class Mesher:
 
         # print("predict semantic labels of the vertices")
         verts_torch = torch.tensor(verts, dtype=self.dtype, device=self.device)
-        _, verts_sem, _, _ = self.query_points(
-            verts_torch, self.config.infer_bs, False, True, False, False
+        _, verts_sem, _, _, _ = self.query_points(
+            verts_torch, self.config.infer_bs, False, True, False, False, False
         )
         verts_sem_list = list(verts_sem)
         verts_sem_rgb = [sem_kitti_color_map[sem_label] for sem_label in verts_sem_list]
@@ -421,14 +446,28 @@ class Mesher:
 
         # print("predict color labels of the vertices")
         verts_torch = torch.tensor(verts, dtype=self.dtype, device=self.device)
-        _, _, verts_color, _ = self.query_points(
-            verts_torch, self.config.infer_bs, False, False, True, False
+        _, _, verts_color, _, _ = self.query_points(
+            verts_torch, self.config.infer_bs, False, False, True, False, False
         )
 
         if self.config.color_channel == 1:
             verts_color = np.repeat(verts_color * 2.0, 3, axis=1)
 
         mesh.vertex_colors = o3d.utility.Vector3dVector(verts_color)
+
+        return mesh
+
+    def estimate_vertices_radar(self, mesh, verts):
+        if len(verts) == 0:
+            return mesh
+
+        # print("predict radar labels of the vertices")
+        verts_torch = torch.tensor(verts, dtype=self.dtype, device=self.device)
+        _, _, _, verts_radar, _ = self.query_points(
+            verts_torch, self.config.infer_bs, False, False, False, True, False
+        )
+
+        mesh.vertex_colors = o3d.utility.Vector3dVector(verts_radar)
 
         return mesh
 
@@ -450,10 +489,11 @@ class Mesher:
     ):
         # print("Generate the SDF slice at heright %.2f (m)" % (slice_z))
         coord, _, _ = self.get_query_from_hor_slice(bbx, slice_z, voxel_size)
-        sdf_pred, _, _, mc_mask = self.query_points(
+        sdf_pred, _, _, _, mc_mask = self.query_points(
             coord,
             self.config.infer_bs,
             True,
+            False,
             False,
             False,
             self.config.mc_mask_on,
@@ -471,10 +511,11 @@ class Mesher:
     ):
         # print("Generate the SDF slice at x position %.2f (m)" % (slice_x))
         coord, _, _ = self.get_query_from_ver_slice(bbx, slice_x, voxel_size)
-        sdf_pred, _, _, mc_mask = self.query_points(
+        sdf_pred, _, _, _, mc_mask = self.query_points(
             coord,
             self.config.infer_bs,
             True,
+            False,
             False,
             False,
             self.config.mc_mask_on,
@@ -557,10 +598,11 @@ class Mesher:
         if coord is None:  # use chunks in this case
             return None
 
-        sdf_pred, _, _, mc_mask = self.query_points(
+        sdf_pred, _, _, _, mc_mask = self.query_points(
             coord,
             self.config.infer_bs,
             True,
+            False,
             False,
             False,
             self.config.mc_mask_on,
@@ -569,8 +611,8 @@ class Mesher:
             out_torch=use_torch_mc,
         )
 
-        mc_sdf, _, _, mc_mask = self.assign_to_bbx(
-            sdf_pred, None, None, mc_mask, voxel_num_xyz
+        mc_sdf, _, _, _, mc_mask = self.assign_to_bbx(
+            sdf_pred, None, None, None, mc_mask, voxel_num_xyz
         )
         if use_torch_mc:
             # torch version

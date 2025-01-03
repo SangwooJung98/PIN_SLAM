@@ -620,17 +620,17 @@ class NeuralPoints(nn.Module):
             radar_features = torch.zeros(
                 batch_size,
                 nn_k,
-                1,
+                self.radar_feature_dim,
                 device=self.device,
                 dtype=self.dtype,
-            ) # [N, K, F] (for rcs only)
+            ) # [N, K, F] 
             if query_locally:
                 radar_features[valid_mask] = self.local_radar_features[idx[valid_mask]]
             else:
                 radar_features[valid_mask] = self.radar_features[idx[valid_mask]]
             if self.config.layer_norm_on:
                 radar_features = F.layer_norm(radar_features, [1])
-
+        # print(radar_features.shape)
         N, K = valid_mask.shape  # K = nn_k here
 
         # print(self.local_point_certainties)
@@ -665,6 +665,7 @@ class NeuralPoints(nn.Module):
             geo_features_vector = torch.cat(
                 (geo_features, neighb_vector), dim=2
             )  # [N, K, F+P]
+        
         if query_color_feature and self.color_features is not None:
             color_features_vector = torch.cat(
                 (color_features, neighb_vector), dim=2
@@ -673,6 +674,7 @@ class NeuralPoints(nn.Module):
             radar_features_vector = torch.cat(
                 (radar_features, neighb_vector), dim=2
             )  # [N, K, F+P]
+        
 
         eps = 1e-15  # avoid nan (dividing by 0)
 

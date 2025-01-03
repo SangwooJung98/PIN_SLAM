@@ -40,6 +40,17 @@ def color_diff_loss(pred, label, weight, weighted=False, l2_loss=False):
         loss = (weight * torch.abs(diff)).mean()
     return loss
 
+def radar_rcs_loss(pred, label, weight, weighted=False, l2_loss=False):
+    diff = pred - label
+    if not weighted:
+        weight = 1.0
+    else:
+        weight = weight.unsqueeze(1)
+    if l2_loss:
+        loss = (weight * (diff**2)).mean()
+    else:
+        loss = (weight * torch.abs(diff)).mean()
+    return loss
 
 # used by our approach
 def sdf_bce_loss(pred, label, sigma, weight, weighted=False, bce_reduction="mean"):
