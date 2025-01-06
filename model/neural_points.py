@@ -22,6 +22,7 @@ from utils.tools import (
     transform_batch_torch,
     voxel_down_sample_min_value_torch,
     voxel_down_sample_torch,
+    voxel_down_sample_rcs_torch,
     feature_pca_torch,
 )
 
@@ -323,6 +324,7 @@ class NeuralPoints(nn.Module):
         sensor_position: torch.Tensor,
         sensor_orientation: torch.Tensor,
         cur_ts,
+        rcs_value: torch.Tensor = None,
     ):
         # update the neural point map using new observations
 
@@ -330,7 +332,12 @@ class NeuralPoints(nn.Module):
         # if self.mean_grid_sampling:
         #     sample_points = meanGridSampling(points, resolution=cur_resolution)
         # take the point that is the closest to the voxel center (now used)
-        sample_idx = voxel_down_sample_torch(points, cur_resolution)
+                
+        if self.config.use_radar_intensity and self.config.rcs_base_np and rcs_value is not None:
+            sample_idx = voxel_down_sample_rcs_torch(points, rcs_value, cur_resolution)
+        else:
+            sample_idx = voxel_down_sample_torch(points, cur_resolution)
+        
         sample_points = points[sample_idx]
 
         grid_coords = (sample_points / cur_resolution).floor().to(self.primes)

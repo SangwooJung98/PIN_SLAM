@@ -581,6 +581,108 @@ def voxel_down_sample_torch(points: torch.tensor, voxel_size: float):
     idx = idx % offset
     return idx
 
+# def voxel_down_sample_rcs_torch(points: torch.tensor, rcs: torch.tensor, voxel_size: float):
+#     """
+#     Voxel-based downsampling based on the highest RCS value in each voxel.
+#     If multiple points have the same highest RCS, the one closest to the voxel center is selected.
+
+#     Args:
+#         points (torch.Tensor): [N, 3] Point coordinates.
+#         rcs (torch.Tensor): [N, 1] RCS values corresponding to each point.
+#         voxel_size (float): Voxel grid resolution.
+
+#     Returns:
+#         indices (torch.Tensor): [M] Indices of the selected points with the highest RCS values or closest to the voxel center in case of ties.
+#     """
+#     assert points.shape[0] == rcs.shape[0], "Points and RCS values must have the same number of entries."
+#     assert rcs.shape[1] == 1, "RCS values must be a column vector with shape [N, 1]."
+
+#     _quantization = 1000
+
+#     # Calculate voxel indices for each point
+#     offset = torch.floor(points.min(dim=0)[0] / voxel_size).long()
+#     grid = torch.floor(points / voxel_size)
+#     grid_center = (grid + 0.5) * voxel_size  # Calculate voxel center
+#     grid = grid.long() - offset
+
+#     # Compute voxel IDs
+#     v_size = grid.max().ceil() + 1  # Ensure unique grid indices
+#     grid_idx = grid[:, 0] + grid[:, 1] * v_size + grid[:, 2] * v_size * v_size
+
+#     # Normalize RCS values for consistent comparison
+#     rcs_scaled = (rcs / rcs.max() * (_quantization - 1)).long()  # Scale RCS to [0, _quantization]
+
+#     # Calculate distance to voxel center
+#     dist_to_center = ((points - grid_center) ** 2).sum(dim=1).sqrt()
+#     dist_scaled = (dist_to_center / dist_to_center.max() * (_quantization - 1)).long()
+
+#     # Find the indices of points with the highest RCS or closest to the center in case of ties
+#     unique, inverse = torch.unique(grid_idx, return_inverse=True)
+#     idx_d = torch.arange(inverse.size(0), dtype=inverse.dtype, device=inverse.device)
+#     offset = 10 ** len(str(idx_d.max().item()))
+
+#     # Combine RCS and distance for tie-breaking
+#     idx_d = idx_d + (rcs_scaled.squeeze(1) * offset) - dist_scaled  # Higher RCS is prioritized; closer distance breaks ties.
+
+#     selected_idx = torch.empty(
+#         unique.shape, dtype=inverse.dtype, device=inverse.device
+#     ).scatter_reduce_(
+#         dim=0, index=inverse, src=idx_d, reduce="amax", include_self=False
+#     )
+    
+#     # Retrieve the original indices
+#     selected_idx %= offset
+#     return selected_idx
+
+def voxel_down_sample_rcs_torch(points: torch.tensor, rcs: torch.tensor, voxel_size: float):
+    """
+    Voxel-based downsampling based solely on the highest RCS value in each voxel.
+
+    Args:
+        points (torch.Tensor): [N, 3] Point coordinates.
+        rcs (torch.Tensor): [N, 1] RCS values corresponding to each point.
+        voxel_size (float): Voxel grid resolution.
+
+    Returns:
+        indices (torch.Tensor): [M] Indices of the selected points with the highest RCS values in each voxel.
+    """
+    assert points.shape[0] == rcs.shape[0], "Points and RCS values must have the same number of entries."
+    assert rcs.shape[1] == 1, "RCS values must be a column vector with shape [N, 1]."
+
+    _quantization = 1000
+    
+    # Calculate voxel indices for each point
+    offset = torch.floor(points.min(dim=0)[0] / voxel_size).long()
+    grid = torch.floor(points / voxel_size)
+    grid = grid.long() - offset
+
+    # Compute voxel IDs
+    v_size = grid.max().ceil()  # Ensure unique grid indices
+    grid_idx = grid[:, 0] + grid[:, 1] * v_size + grid[:, 2] * v_size * v_size
+
+    # Normalize RCS values for consistent comparison
+    rcs_scaled = (rcs / rcs.max() * (_quantization - 1)).squeeze(1).long()  # Scale RCS to [0, 1000]
+
+    # Find the indices of points with the highest RCS value in each voxel
+    unique, inverse = torch.unique(grid_idx, return_inverse=True)
+    idx_d = torch.arange(inverse.size(0), dtype=inverse.dtype, device=inverse.device)
+    
+    offset = 10 ** len(str(idx_d.max().item()))
+    
+    # Use RCS values directly to select the maximum
+    idx_d = idx_d + rcs_scaled * offset
+
+    selected_idx = torch.empty(
+        unique.shape, dtype=inverse.dtype, device=inverse.device
+    ).scatter_reduce_(
+        dim=0, index=inverse, src=idx_d, reduce="amax", include_self=False
+    )
+    
+    # Retrieve the original indices
+    selected_idx %= offset
+    
+    return selected_idx
+
 
 def voxel_down_sample_min_value_torch(
     points: torch.tensor, voxel_size: float, value: torch.tensor

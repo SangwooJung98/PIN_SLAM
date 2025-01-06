@@ -64,8 +64,10 @@ class DataSampler:
             color_channel = color_torch.shape[1]
             surface_color_tensor = color_torch.repeat(surface_sample_n, 1)
         if radar_torch is not None:
+            # print("radar_torch shape: ", radar_torch.shape)
             radar_channel = radar_torch.shape[1] # currently 1 (test for rcs)
             surface_radar_tensor = radar_torch.repeat(surface_sample_n, 1)
+            # print("surface_radar_tensor shape: ", surface_radar_tensor.shape)
 
         # Part 2. free space (in front of surface) uniform sampling
         # if you want to reconstruct the thin objects (like poles, tree branches) well, you need more freespace samples to have
@@ -93,6 +95,7 @@ class DataSampler:
             free_radar_front = torch.zeros(
                 point_num * freespace_front_sample_n, radar_channel, device=dev
             )
+            # print("free_radar_front shape: ", free_radar_front.shape)
 
         # Part 3. free space (behind surface) uniform sampling
         repeated_dist = distances.repeat(freespace_behind_sample_n, 1)
@@ -119,6 +122,7 @@ class DataSampler:
             free_radar_behind = torch.zeros(
                 point_num * freespace_behind_sample_n, radar_channel, device=dev
             )
+            # print("free_radar_behind shape: ", free_radar_behind.shape)
 
         # T1 = get_time()
 
@@ -230,6 +234,7 @@ class DataSampler:
                 ),
                 0,
             )
+            # print("radar_tensor shape: ", radar_tensor.shape)
 
         # T2 = get_time()
         # Convert from the all ray surface + all ray free order to the ray-wise (surface + free) order
@@ -270,6 +275,7 @@ class DataSampler:
                 .transpose(0, 1)
                 .reshape(-1, radar_channel)
             )
+            # print("radar_tensor shape: ", radar_tensor.shape)
 
         # ray distance (distances) is not repeated
 

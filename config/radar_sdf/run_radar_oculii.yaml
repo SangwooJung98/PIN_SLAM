@@ -6,7 +6,8 @@ setting:
   # begin_frame: 1
   # end_frame: 8450
   is_radar: True
-  use_radar_intensity: True
+  use_radar_intensity: False
+  rcs_base_np: False
 process:
   min_range_m: 3.0
   max_range_m: 200.0
@@ -30,7 +31,7 @@ continual:
 tracker:
   source_vox_down_m: 0.5
   iter_n: 100
-  radar_loss: True
+  radar_loss: False
 pgo:
   pgo_freq_frame: 20
   context_cosdist: 0.3

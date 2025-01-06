@@ -247,9 +247,13 @@ class Mapper:
         T2 = get_time()
 
         # update the neural point map
+        rcs_value = None
+        
         if self.config.from_sample_points:
             if self.config.from_all_samples:
                 update_points = coord
+                if self.config.rcs_base_np:
+                    rcs_value = radar_label
             else:
                 update_points = coord[
                     torch.abs(sdf_label)
@@ -258,8 +262,17 @@ class Mapper:
                     :,
                 ]
                 update_points = transform_torch(update_points, cur_pose_torch)
+                if self.config.rcs_base_np:
+                    rcs_value = radar_label[
+                        torch.abs(sdf_label)
+                        < self.config.surface_sample_range_m
+                        * self.config.map_surface_ratio,
+                        :,
+                    ]
         else:
             update_points = transform_torch(frame_point_torch, cur_pose_torch)
+            if self.config.rcs_base_np:
+                rcs_value = frame_radar_torch
 
         # prune map and recreate hash
         if self.config.prune_map_on and ((frame_id + 1) % self.config.prune_freq_frame == 0):
@@ -268,7 +281,7 @@ class Mapper:
         
         # update map and judge how much new observations are gained
         self.cur_new_point_ratio = self.neural_points.update(
-            update_points, frame_origin_torch, frame_orientation_torch, frame_id
+            update_points, frame_origin_torch, frame_orientation_torch, frame_id, rcs_value
         )
 
         # if not much new information we do not need to do much mapping

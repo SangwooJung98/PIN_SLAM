@@ -55,6 +55,7 @@ class Config:
         # option for radar pointcloud including radial velocity
         self.is_radar = False
         self.use_radar_intensity = False
+        self.rcs_base_np = False
 
         # preprocess
         # distance filter
@@ -359,6 +360,7 @@ class Config:
             
             self.is_radar = config_args["setting"].get("is_radar", self.is_radar) # use radar radial velocity or not
             self.use_radar_intensity = config_args["setting"].get("use_radar_intensity", self.use_radar_intensity) # use radar intensity or not
+            self.rcs_base_np = config_args["setting"].get("rcs_base_np", self.rcs_base_np) # use radar RCS to downsample input point while choosing neural point
 
         # process
         if "process" in config_args:
