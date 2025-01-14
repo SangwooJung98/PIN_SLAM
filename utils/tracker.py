@@ -217,6 +217,106 @@ class Tracker:
         if not valid_flag and i < 10:  # NOTE: if not valid and without enough iters, just take the initial guess
             T = init_pose
             cov_mat = None
+        
+        
+        
+        
+        
+        # add NDT based odometry calculation at here (only for temporary test)
+        
+        # start with generating SDF map by using local neural map
+        
+        (
+            sdf_pred,
+            sdf_grad,
+            _,
+            _,
+            _,
+            _,
+            _,
+            mask,
+            certainty,
+            sdf_std,
+        ) = self.query_source_points(
+            self.neural_points.local_neural_points,
+            self.config.infer_bs,
+            True,
+            True,
+            False,
+            False,
+            False,
+            False,
+            query_locally=True,
+            mask_min_nn_count=self.config.track_mask_query_nn_k,
+        )
+                       
+        # check the center of local neural points
+        # print("neural point center: ", self.neural_points.local_neural_points.mean(dim=0))
+        # print("neural_points.local_neural_points form: ", self.neural_points.local_neural_points.shape)
+        
+        surface_points_from_sdf = filter_surface_points(self.neural_points.local_neural_points, sdf_pred, epsilon = 0.03)
+                        
+        # change the points to local frame (based on the initial pose)
+        # initial pose is the pose of the previous frame (inverse the init_pose)
+        
+        surface_points_from_sdf = transform_torch(surface_points_from_sdf, torch.inverse(init_pose))
+        
+        print("surface full points shape: ", surface_points_from_sdf.shape)
+        
+        # leave only the points that are included in the area of source_points
+        
+        max_x = source_points[:, 0].max()
+        min_x = source_points[:, 0].min()
+        max_y = source_points[:, 1].max()
+        min_y = source_points[:, 1].min()
+        max_z = source_points[:, 2].max()
+        min_z = source_points[:, 2].min()
+        
+        mask_source = (surface_points_from_sdf[:, 0] < max_x) & (surface_points_from_sdf[:, 0] > min_x) & (surface_points_from_sdf[:, 1] < max_y) & (surface_points_from_sdf[:, 1] > min_y) & (surface_points_from_sdf[:, 2] < max_z) & (surface_points_from_sdf[:, 2] > min_z)
+        surface_points_from_sdf = surface_points_from_sdf[mask_source]
+        
+        print("front surface points shape: ", surface_points_from_sdf.shape)
+        # print("surface point center: ", surface_points_from_sdf.mean(dim=0))   
+        # print("surface point x min: ", surface_points_from_sdf[:, 0].min())
+        # print("surface point x max: ", surface_points_from_sdf[:, 0].max())
+        # print("surface point y min: ", surface_points_from_sdf[:, 1].min())
+        # print("surface point y max: ", surface_points_from_sdf[:, 1].max())
+        # print("surface point z min: ", surface_points_from_sdf[:, 2].min())
+        # print("surface point z max: ", surface_points_from_sdf[:, 2].max())
+        
+        print("source points shape: ", source_points.shape)
+        # print("source points center: ", source_points.mean(dim=0))
+        # print("source point x min: ", source_points[:, 0].min())
+        # print("source point x max: ", source_points[:, 0].max())
+        # print("source point y min: ", source_points[:, 1].min())
+        # print("source point y max: ", source_points[:, 1].max())
+        # print("source point z min: ", source_points[:, 2].min())
+        # print("source point z max: ", source_points[:, 2].max())
+        
+        ndt_voxel_size = 1
+        # start measuring the time
+        aT0 = get_time()
+        local_ndt = create_ndt_from_pointcloud_fast(surface_points_from_sdf, ndt_voxel_size)
+        aT1 = get_time()
+        source_ndt = create_ndt_from_pointcloud_fast(source_points, ndt_voxel_size)
+        aT2 = get_time()
+        
+        # PRINT the size of ndt
+        print("local ndt size: ", len(local_ndt))
+        print("local ndt time: ", (aT1 - aT0) * 1e3)
+        print("source ndt size: ", len(source_ndt))
+        print("source ndt time: ", (aT2 - aT1) * 1e3)
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
 
         return T, cov_mat, weight_point_cloud, valid_flag
 
@@ -921,3 +1021,73 @@ def rotation_matrix_to_axis_angle(R):
     angle = torch.acos((trace - 1) / 2)
 
     return angle  # rad
+
+
+
+
+
+
+
+### code for NDT odometry
+
+def filter_surface_points(points, sdf_values, epsilon=0.05):
+    """
+    Filter points near the surface based on SDF values.
+
+    Args:
+        points (torch.Tensor): Input point cloud (Nx3).
+        sdf_values (torch.Tensor): Corresponding SDF values (N,).
+        epsilon (float): Threshold for surface points.
+
+    Returns:
+        surface_points (torch.Tensor): Points near the surface (Mx3).
+    """
+    surface_mask = torch.abs(sdf_values) < epsilon
+    surface_points = points[surface_mask]
+    return surface_points
+
+def create_ndt_from_pointcloud_fast(surface_points, voxel_size):
+    """
+    Fast NDT map creation from surface points using scatter for parallelization.
+
+    Args:
+        surface_points (torch.Tensor): Points near the surface (Mx3).
+        voxel_size (float): Size of each voxel.
+
+    Returns:
+        ndt_map (dict): NDT map with voxel indices as keys and (mean, covariance) as values.
+    """
+    # Compute voxel indices
+    voxel_indices = torch.floor(surface_points / voxel_size).to(torch.int32)  # (M, 3)
+
+    # Flatten voxel indices to unique keys (1D)
+    voxel_keys = (voxel_indices * torch.tensor([1, 1000, 1000000], device=voxel_indices.device)).sum(dim=1)
+
+    # Find unique voxel keys and assign points to them
+    unique_keys, inverse_indices = torch.unique(voxel_keys, return_inverse=True)
+
+    # Initialize structures for mean and covariance computation
+    num_voxels = unique_keys.size(0)
+    ndt_means = torch.zeros((num_voxels, 3), device=surface_points.device)
+    ndt_covariances = torch.zeros((num_voxels, 3, 3), device=surface_points.device)
+    voxel_counts = torch.zeros(num_voxels, device=surface_points.device)
+
+    # Step 1: Calculate mean using scatter
+    ndt_means = ndt_means.index_add_(0, inverse_indices, surface_points)
+    voxel_counts = voxel_counts.index_add_(0, inverse_indices, torch.ones_like(inverse_indices, dtype=torch.float32))
+    ndt_means /= voxel_counts.unsqueeze(1)
+
+    # Step 2: Calculate covariance using scatter
+    diffs = surface_points - ndt_means[inverse_indices]
+    cov_updates = diffs.unsqueeze(2) @ diffs.unsqueeze(1)  # (M, 3, 3)
+    ndt_covariances.index_add_(0, inverse_indices, cov_updates)
+    ndt_covariances /= voxel_counts.unsqueeze(1).unsqueeze(2)
+
+    # Step 3: Build the NDT map
+    ndt_map = {}
+    for i, key in enumerate(unique_keys):
+        if voxel_counts[i] > 1:  # Exclude single-point voxels
+            voxel_idx = (key % 1000, (key // 1000) % 1000, key // 1000000)
+            ndt_map[voxel_idx] = (ndt_means[i], ndt_covariances[i])
+
+    return ndt_map

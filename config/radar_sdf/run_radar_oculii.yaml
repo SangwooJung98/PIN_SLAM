@@ -1,13 +1,13 @@
 setting:
   name: "test_oculii"
   output_root: "./experiments"
-  pc_path: "/home/irap/dataset/NTU/loop2"
-  pose_path: "/home/irap/dataset/NTU/gt_odom/loop2_oculii.txt"
+  pc_path: "/home/irap/dataset/NTU/loop3"
+  pose_path: "/home/irap/dataset/NTU/gt_odom/loop3_oculii.txt"
   # begin_frame: 1
   # end_frame: 8450
   is_radar: True
-  use_radar_intensity: False
-  rcs_base_np: False
+  use_radar_intensity: True
+  rcs_base_np: True
 process:
   min_range_m: 3.0
   max_range_m: 200.0
@@ -31,7 +31,7 @@ continual:
 tracker:
   source_vox_down_m: 0.5
   iter_n: 100
-  radar_loss: False
+  radar_loss: True
 pgo:
   pgo_freq_frame: 20
   context_cosdist: 0.3
