@@ -424,6 +424,9 @@ class SLAMDataset(Dataset):
                 temp_tran[:3, 3] = self.cur_ego_vel * time_diff
                 temp_tran[:3, :3] = self.last_odom_tran[:3, :3]
                 cur_pose_init_guess = (self.last_pose_ref @ temp_tran)
+                
+                # turn off initial guess for testing ndt mapping
+                # cur_pose_init_guess = self.last_pose_ref
 
             if not self.config.track_on and self.gt_pose_provided:
                 cur_pose_init_guess = self.gt_poses[frame_id]
